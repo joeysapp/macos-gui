@@ -10,6 +10,44 @@ Sometimes I lose Bluetooth connection, but most of the time when I do it's a res
 ## screenshot
 The builtin screenshot tool was missing the fuzzy-finding by title I think? I felt justified in this.
 
+## clipboard-network
+Windows listener correctly receives length-prefixed UTF-8 protocol from macOS.
+```sh
+macOS
+  ▼ pbpaste → SSH stdin
+  
+Windows SSH session (session 0)
+  ▼ localhost TCP
+Windows clipboard bridge (session 1)
+  ▼ Set-Clipboard
+Windows desktop clipboard
+```
+As a result, we get the following benefits:
+- newlines survive
+- tabs survive
+- Unicode survives
+- emoji survive
+- whitespace survives
+- there is no shell quoting of clipboard contents
+- clipboard data never becomes a command
+
+To use in your network:
+1. Add this directory to your path
+2. **If a zshell user**, install completions and dump cache:
+  - zcomp="$HOME/.zsh/completions" mkdir -p $zcomp && cp _clipboard-network $zcomp
+  - add these lines to zshrc if not present:
+      fpath=(~/.zsh/completions $fpath)
+      autoload -Uz compinit
+      compinit
+  - rm -f ~/.zcompdump && compinit 
+3. **If more than 0 Windows machines**, install the ps1 task on any Windows hosts to safely ingest bytes correctly (clip -> utf8 chunks) Register once *AFTER* moving your script to where it belongs on posix. Checks to verify:
+  1. Start-ScheduledTask -TaskName "$name-you-set"
+  2. Get-ScheduledTask -TaskName "$name-you-set"
+  3. Test-NetConnection 127.0.0.1 -Port 37421
+     > TcpTestSucceeded : True
+  4. 
+  4. 
+  
 ## automation
 ### Components
 - Screen - Capture screenshots (Screen.capture(), Screen.size())

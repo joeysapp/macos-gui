@@ -1,0 +1,346 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+## There's one thing I'd change before you install the
+## PowerShell bridge permanently: the Windows bridge's
+## send mode currently buffers all stdin in memory.
+## 
+## For clipboard-sized data that's completely fine, and it's
+## arguably preferable here because Windows Set-Clipboard wants a string.
+## 
+## But if we're treating this as a little reusable Unix utility
+## rather than a one-off hack, I'd cap the payload at something reasonable,
+## say 16–32 MiB — and return a clean failure rather than letting
+## somebody accidentally `cat /dev/zero | clipboard-network $WINHOST`
+####                ~ A famous philosopher with more time than me
+##
+## - Autocompletions worth looking at: _ssh_hosts
+
+ssh_args=()
+
+verbose=0
+quiet=0
+operation=push
+
+die() {
+    printf 'clipboard-network: %s\n' "$*" >&2
+    exit 1
+}
+
+log() {
+    (( quiet )) || printf '%s\n' "$*"
+}
+
+ssh_cmd() {
+    ssh ${ssh_args[@]+"${ssh_args[@]}"} "$host" "$@"
+}
+
+ssh_probe() {
+    ssh -n ${ssh_args[@]+"${ssh_args[@]}"} "$host" "$@"
+}
+
+# initial version
+remote_os() {
+    ssh_probe 'uname -s 2>/dev/null || echo Windows_NT'
+}
+
+# version 2
+# The new remote_os is swallowing the actual SSH error, you redirect stderr from SSH itself into /dev/null.
+# So if SSH can't connect/authenticate/run the command, we get exactly 'could not determine remote OS' with no clue why.
+# And there's a second subtle issue: for localhost, if your Mac's ssh localhost requires a password/passphrase or isn't configured, the same thing happens.
+__remote_os() {
+    local os
+
+    if os="$(ssh_probe 'uname -s')" && [[ -n "$os" ]]; then
+        printf '%s\n' "$os"
+        return 0
+    fi
+
+    if ssh_probe \
+											'powershell.exe -NoProfile -NonInteractive -Command "exit 0"' \
+											>/dev/null 2>&1
+							# for no swalling of errors/debugging:
+							# 'powershell.exe -NoProfile -NonInteractive -Command "exit 0"'							
+    then
+        printf 'Windows\n'
+        return 0
+    fi
+
+    return 1
+}
+
+usage() {
+    cat <<'EOF'
+Transfer system clipboards between systems over SSH.
+
+Usage:
+  clipboard-network [OPTIONS] HOST
+  clipboard-network push [OPTIONS] HOST
+  clipboard-network pull [OPTIONS] HOST
+
+Operations:
+  push                  Local clipboard -> remote clipboard (default)
+  pull                  Remote clipboard -> local clipboard
+
+Options:
+  -v, --verbose         Show transfer progress
+  -q, --quiet           Suppress status output
+      --ssh ARG         Pass args to ssh (N times)
+  -h, --help            Show this help
+
+Examples:
+  clipboard-network pull $HOST2
+  clipboard-network --ssh -v --ssh -p 2020 -o ConnectTimeout=3 $HOST3
+
+Systems:
+  macOS     pbcopy / pbpaste
+  Linux     wl-copy / wl-paste, xclip, or xsel
+  Windows   Requires clipboard-network.ps1 installed as a per-user task
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        push|pull)
+            operation="$1"
+            shift
+            ;;
+
+        -h|--help)
+            usage
+            exit 0
+            ;;
+
+        -v|--verbose)
+            verbose=1
+            shift
+            ;;
+
+        -q|--quiet)
+            quiet=1
+            shift
+            ;;
+
+       --ssh)
+           [[ $# -ge 2 ]] || die "--ssh requires an argument"
+           ssh_args+=("$2")
+           shift 2
+           ;;
+
+        --)
+            shift
+            break
+            ;;
+
+        -*)
+            die "unknown option: $1"
+            ;;
+
+        *)
+            break
+            ;;
+    esac
+done
+
+[[ $# -eq 1 ]] || {
+    usage >&2
+    exit 2
+}
+
+host="$1"
+
+local_paste() {
+    if command -v pbpaste >/dev/null 2>&1; then
+        pbpaste
+    elif command -v wl-paste >/dev/null 2>&1; then
+        wl-paste --no-newline
+    elif command -v xclip >/dev/null 2>&1; then
+        xclip -selection clipboard -o
+    elif command -v xsel >/dev/null 2>&1; then
+        xsel --clipboard --output
+    else
+        die "no supported local clipboard reader found"
+    fi
+}
+
+local_copy() {
+    if command -v pbcopy >/dev/null 2>&1; then
+        pbcopy
+    elif command -v wl-copy >/dev/null 2>&1; then
+        wl-copy
+    elif command -v xclip >/dev/null 2>&1; then
+        xclip -selection clipboard
+    elif command -v xsel >/dev/null 2>&1; then
+        xsel --clipboard --input
+    else
+        die "no supported local clipboard writer found"
+    fi
+}
+
+# Do not use ssh_probe for the actual clipboard transfer - this is ssh -n!
+#
+# Redirects stdin from /dev/null (actually, prevents reading from
+# stdin).  This must be used when ssh is run in the background.  A
+# common trick is to use this to run X11 programs on a remote
+# machine.  For example, ssh -n shadows.cs.hut.fi emacs & will
+# start an emacs on shadows.cs.hut.fi, and the X11 connection will
+# be automatically forwarded over an encrypted channel.  The ssh
+# program will be put in the background.  (This does not work if
+# ssh needs to ask for a password or passphrase; see also the -f
+# option.)  Refer to the description of StdinNull in ssh_config(5)
+# for details.
+#
+# So,
+#                            stdin allowed?
+# (here) OS probe            NO  → ssh -n
+#        clipboard push      YES → ssh
+#        clipboard pull      irrelevant
+
+
+remote_windows_send() {
+    ssh_cmd 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\bin\clipboard-network.ps1" send'
+}
+
+remote_windows_get() {
+    ssh_cmd 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\bin\clipboard-network.ps1" get'
+}
+
+remote_set() {
+    case "$1" in
+        Darwin)
+            ssh_cmd 'pbcopy'
+            ;;
+
+        Linux)
+            ssh_cmd '
+                if command -v wl-copy >/dev/null 2>&1; then
+                    wl-copy
+                elif command -v xclip >/dev/null 2>&1; then
+                    xclip -selection clipboard
+                elif command -v xsel >/dev/null 2>&1; then
+                    xsel --clipboard --input
+                else
+                    echo "No supported Linux clipboard writer" >&2
+                    exit 1
+                fi
+            '
+            ;;
+
+        Windows)
+            remote_windows_send
+            ;;
+
+        *)
+            die "unsupported remote OS: $1"
+            ;;
+    esac
+}
+
+remote_get() {
+    case "$1" in
+        Darwin)
+            ssh_cmd 'pbpaste'
+            ;;
+
+        Linux)
+            ssh_cmd '
+                if command -v wl-paste >/dev/null 2>&1; then
+                    wl-paste --no-newline
+                elif command -v xclip >/dev/null 2>&1; then
+                    xclip -selection clipboard -o
+                elif command -v xsel >/dev/null 2>&1; then
+                    xsel --clipboard --output
+                else
+                    echo "No supported Linux clipboard reader" >&2
+                    exit 1
+                fi
+            '
+            ;;
+
+        Windows)
+            remote_windows_get
+            ;;
+
+        *)
+            die "unsupported remote OS: $1"
+            ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# Detect remote OS
+# ---------------------------------------------------------------------------
+
+log "clipboard-network: connecting to $host"
+
+if ! os="$(remote_os)"; then
+    die "could not determine remote OS"
+fi
+
+# if ! os="$(remote_os)"; then
+#     die "could not determine remote OS"
+# fi
+
+case "$os" in
+    Darwin*)  remote_kind="Darwin" ;;
+    Linux*)   remote_kind="Linux" ;;
+    Windows*|"") remote_kind="Windows" ;;
+    *)        remote_kind="$os" ;;
+esac
+
+log "clipboard-network: remote OS: $remote_kind"
+
+# ---------------------------------------------------------------------------
+# PUSH
+# ---------------------------------------------------------------------------
+if [[ "$operation" == "push" ]]; then
+
+    if [[ -t 0 ]]; then
+        source="local clipboard"
+        input_cmd=(local_paste)
+    else
+        source="stdin"
+        input_cmd=(cat)
+    fi
+
+    if (( verbose )); then
+        log "clipboard-network: source: $source"
+        log "clipboard-network: sending to $host"
+    fi
+
+    if [[ "$remote_kind" == "Windows" ]]; then
+        if ! "${input_cmd[@]}" | remote_windows_send; then
+            die "failed to update remote clipboard"
+        fi
+    else
+        if ! "${input_cmd[@]}" | remote_set "$remote_kind"; then
+            die "failed to update remote clipboard"
+        fi
+    fi
+
+    if (( verbose )); then
+        log "clipboard-network: SSH transfer complete"
+        log "Success: clipboard updated on $host"
+    fi
+
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# PULL
+# ---------------------------------------------------------------------------
+
+if (( verbose )); then
+    log "clipboard-network: reading clipboard from $host"
+fi
+
+if ! remote_get "$remote_kind" | local_copy; then
+    die "failed to update local clipboard"
+fi
+
+if (( verbose )); then
+    log "clipboard-network: local clipboard updated"
+    log "Success: clipboard received from $host"
+fi
+
+exit 0

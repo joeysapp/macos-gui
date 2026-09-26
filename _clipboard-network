@@ -1,0 +1,29 @@
+#compdef clipboard-network
+
+_clipboard-network() {
+    local -a commands
+    commands=(
+        'push:copy local clipboard/stdin to remote clipboard'
+        'pull:copy remote clipboard to local clipboard'
+    )
+
+    _arguments -s \
+        '1:operation:->operation' \
+        '2:host:_ssh_hosts' \
+        '(-v --verbose)'{-v,--verbose}'[show transfer status]' \
+        '(-q --quiet)'{-q,--quiet}'[suppress status output]' \
+        '--ssh[pass an option to ssh]:ssh option' \
+        '*::arguments:->arguments'
+
+    case "$state" in
+        operation)
+            _describe 'operation' commands
+            ;;
+
+        arguments)
+            _ssh_hosts
+            ;;
+    esac
+}
+
+_clipboard-network "$@"
