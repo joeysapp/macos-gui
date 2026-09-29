@@ -2,7 +2,7 @@
 
 set -e
 
-NAME="mirror.sh"
+NAME="$(basename $0)"
 
 usage() {
     cat <<HELP
@@ -10,15 +10,15 @@ Usage:
   $NAME start <id|index>
   $NAME stop [id|index]
   $NAME list
-  $NAME status
+  $NAME status 
 
 Options:
-  -h, --help       Show this help
   -v, --version    Show version
+  -h, --help       Show this help
 
 Examples:
   $NAME list
-  $NAME start 4D:42:49:32:5D:B5
+  $NAME start 10.0.5.25
   $NAME start 1
   $NAME stop
 HELP
@@ -30,7 +30,7 @@ die() {
 }
 
 list_displays() {
-    print "🔍 Scanning for AirPlay displays (this takes a couple seconds)..."
+    print "Discovering nearby AirPlay devices on network.."
     
     local tmpfile
     tmpfile=$(mktemp)
@@ -59,7 +59,6 @@ list_displays() {
         return
     fi
     
-    print "🖥  Available Displays:"
     local i=1
     for name in ${(k)unique_names}; do
         local detail_tmp
@@ -80,8 +79,8 @@ list_displays() {
         local id_to_show="$deviceid"
         [[ -n "$psi" ]] && id_to_show="$psi"
         
-        print "  [$i] $name"
-        [[ -n "$id_to_show" ]] && print "      ID: $id_to_show"
+        printf " $i  $name"
+        [[ -n "\n\t$id_to_show\t" ]] && printf "\n\tdeviceid $id_to_show\t"
         
         ((i++))
     done
@@ -251,7 +250,7 @@ case "$command" in
         list_displays
         ;;
     start)
-        (( $# >= 1 )) || die "start requires an ID or index"
+        (( $# >= 1 )) || die "start requires target index or device id from list index"
         toggle_mirroring "start" "$1"
         ;;
     stop)
