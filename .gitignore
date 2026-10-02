@@ -4,3 +4,6 @@ tmp
 
 automation/.venv/
 automation/templates
+
+# Binaries
+tools/background_set/background_set

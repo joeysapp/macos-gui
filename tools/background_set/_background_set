@@ -1,0 +1,92 @@
+#compdef background_set
+
+_background_set() {
+    local -a commands modes
+    commands=(
+        'set:Set desktop wallpaper to an image file'
+        'color:Set solid background color'
+        'random:Select a random image from a directory'
+        'rotate:Rotate wallpapers periodically from a directory'
+        'spaces:Assign distinct wallpapers across connected displays'
+        'list:List connected displays, IDs, resolution, and current wallpaper'
+        'status:Alias for list'
+        'get:Get the current wallpaper path for display(s)'
+    )
+
+    modes=(
+        'fill:Crop and zoom to cover entire screen'
+        'fit:Fit to screen with matte letterbox/pillarbox borders'
+        'stretch:Stretch image axes independently to fill screen'
+        'center:Center image at 1:1 original pixel size'
+    )
+
+    local -a common_opts
+    common_opts=(
+        '(-d --display)'{-d,--display}'[Target display (index, ID, or name)]:display:->displays'
+        '(-m --mode)'{-m,--mode}'[Scaling mode (fill, fit, stretch, center)]:mode:->modes'
+        '(-c --color)'{-c,--color}'[Background matte/fill color (#hex or name)]:color:'
+        '(-n --dry-run)'{-n,--dry-run}'[Print actions without changing anything]'
+        '(-h --help)'{-h,--help}'[Show help]'
+        '(-v --version)'{-v,--version}'[Show version]'
+    )
+
+    _arguments -C \
+        $common_opts \
+        '1: :->command_or_file' \
+        '*:: :->args' && return 0
+
+    case "$state" in
+        displays)
+            local -a display_list
+            display_list=('all:All connected displays' '0:Primary display' '1:Secondary display')
+            _describe -t displays 'display' display_list
+            ;;
+        modes)
+            _describe -t modes 'wallpaper mode' modes
+            ;;
+        command_or_file)
+            local -a image_files
+            _describe -t commands 'subcommand' commands
+            _files -g '*.([jJ][pP][gG]|[jJ][pP][eE][gG]|[pP][nN][gG]|[hH][eE][iI][cC]|[wW][eE][bB][pP]|[tT][iI][fF][fF])'
+            ;;
+        args)
+            case "$words[1]" in
+                set)
+                    _arguments \
+                        $common_opts \
+                        '1:image file:_files -g "*.([jJ][pP][gG]|[jJ][pP][eE][gG]|[pP][nN][gG]|[hH][eE][iI][cC]|[wW][eE][bB][pP]|[tT][iI][fF][fF])"'
+                    ;;
+                color)
+                    _arguments \
+                        $common_opts \
+                        '1:color (#hex or name):'
+                    ;;
+                random)
+                    _arguments \
+                        $common_opts \
+                        '1:wallpaper directory:_files -/'
+                    ;;
+                rotate)
+                    _arguments \
+                        $common_opts \
+                        '1:wallpaper directory:_files -/' \
+                        '2:interval (e.g. 30s, 5m, 1h, 1d):'
+                    ;;
+                spaces)
+                    _arguments \
+                        $common_opts \
+                        '1:directory or image:_files' \
+                        '*:images:_files'
+                    ;;
+                get|list|status)
+                    _arguments $common_opts
+                    ;;
+                *)
+                    _files
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_background_set "$@"
