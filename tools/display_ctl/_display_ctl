@@ -1,0 +1,35 @@
+#compdef display_ctl
+
+_display_ctl() {
+    local -a commands
+    commands=(
+        'list:List all online displays and their modes'
+        'status:Show current display configuration'
+        'mirror:Mirror secondary/AirPlay display to main display'
+        'extend:Set secondary display to extended desktop (unmirror)'
+        'toggle:Toggle display between mirrored and extended'
+        'resolutions:List supported resolutions for a display'
+        'resolution:Set display resolution (e.g. 1920x1080)'
+    )
+
+    _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '(-v --version)'{-v,--version}'[Show version]' \
+        '1: :->command' \
+        '*:: :->args'
+
+    case $state in
+        command)
+            _describe -t commands 'display_ctl command' commands
+            ;;
+        args)
+            case $words[1] in
+                mirror|extend|toggle|resolutions|resolution)
+                    _values 'display' '0' '1' 'LG' 'torus'
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_display_ctl "$@"

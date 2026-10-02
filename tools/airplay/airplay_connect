@@ -1,0 +1,569 @@
+#!/usr/bin/env python3
+"""
+airplay_connect - Robust macOS AirPlay Screen Mirroring CLI
+
+Features:
+- Deterministic device discovery with stable indices and friendly name resolution
+- Supports targeting by index (1, 2), friendly name ("LG", "torus"), MAC address, or UUID
+- Clean disconnect with `stop` (no arguments required, properly detects active macOS sessions)
+- Native display mode control (mirror or extend) and resolution integration via `display_ctl`
+- Auto-reconnect watchdog (`--watch` / `keepalive`) for problematic displays like LG OLED
+- Built-in diagnostics log viewer (`logs`) querying macOS Unified Log for teardown reasons
+"""
+
+import sys
+import os
+import re
+import time
+import json
+import signal
+import subprocess
+from pathlib import Path
+
+VERSION = "0.2.0"
+TOOL_NAME = "airplay_connect"
+CACHE_FILE = Path(os.path.expanduser("~/.cache/macos-gui/airplay_cache.json"))
+
+def die(msg, code=1):
+    sys.stderr.write(f"error: {msg}\n")
+    sys.exit(code)
+
+def run_cmd(args, timeout=None):
+    try:
+        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout.strip(), p.stderr.strip()
+    except subprocess.TimeoutExpired:
+        return -1, "", "timeout"
+    except Exception as e:
+        return -1, "", str(e)
+
+def run_applescript(script, *args):
+    cmd = ["osascript", "-"] + list(args)
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    out, err = p.communicate(input=script)
+    return p.returncode, out.strip(), err.strip()
+
+# MARK: - Device Discovery & Cache
+
+def load_cache():
+    if CACHE_FILE.exists():
+        try:
+            with open(CACHE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+def save_cache(devices):
+    try:
+        CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(CACHE_FILE, "w") as f:
+            json.dump(devices, f, indent=2)
+    except Exception:
+        pass
+
+def discover_devices(timeout=2.0):
+    p = subprocess.Popen(["dns-sd", "-B", "_airplay._tcp"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        out, _ = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        out, _ = p.communicate()
+
+    names = set()
+    local_host = subprocess.run(["hostname", "-s"], capture_output=True, text=True).stdout.strip().lower()
+
+    for line in out.splitlines():
+        if "_airplay._tcp." in line and "STARTING" not in line:
+            parts = line.split("_airplay._tcp.")
+            if len(parts) > 1:
+                name = parts[1].strip()
+                # Skip localhost / current computer
+                if name and name.lower() not in [local_host, "localhost"]:
+                    names.add(name)
+
+    devices = []
+    for name in sorted(names):
+        lp = subprocess.Popen(["dns-sd", "-L", name, "_airplay._tcp", "local."], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            lout, _ = lp.communicate(timeout=1.2)
+        except subprocess.TimeoutExpired:
+            lp.kill()
+            lout, _ = lp.communicate()
+
+        dev_id = ""
+        psi = ""
+        model = ""
+        m_dev = re.search(r"deviceid=([^\s]+)", lout)
+        if m_dev: dev_id = m_dev.group(1).upper()
+        m_psi = re.search(r"psi=([^\s]+)", lout)
+        if m_psi: psi = m_psi.group(1).upper()
+        m_mod = re.search(r"model=([^\s]+)", lout)
+        if m_mod: model = m_mod.group(1)
+
+        # Primary identifier used in ControlCenter:
+        # TVs usually match deviceid (MAC format, e.g. 4D:42:49:32:5D:B5)
+        # Macs/AppleTVs often match psi (UUID, e.g. 6B0E5414-F927-4F27-AEDB-DBDBD37A4493)
+        target_id = dev_id if dev_id else psi
+
+        devices.append({
+            "name": name,
+            "deviceid": dev_id,
+            "psi": psi,
+            "target_id": target_id,
+            "model": model
+        })
+
+    # Sort deterministically by name
+    devices.sort(key=lambda d: d["name"].lower())
+    save_cache(devices)
+    return devices
+
+def normalize_identifier(target):
+    """Normalize hex MAC or UUID formats for fuzzy comparison."""
+    clean = re.sub(r"[^A-Fa-f0-9]", "", target).upper()
+    return clean
+
+def resolve_target(target_str, devices=None):
+    if not devices:
+        devices = load_cache()
+    if not devices:
+        devices = discover_devices(timeout=1.5)
+
+    if not target_str:
+        return None
+
+    target_str = target_str.strip()
+
+    # 1. 1-based index
+    if target_str.isdigit():
+        idx = int(target_str) - 1
+        if 0 <= idx < len(devices):
+            return devices[idx]
+
+    # 2. Exact or substring match on friendly name
+    lower_target = target_str.lower()
+    for dev in devices:
+        if lower_target == dev["name"].lower() or lower_target in dev["name"].lower():
+            return dev
+
+    # 3. Match on deviceid or psi (with or without colons/dashes)
+    norm_target = normalize_identifier(target_str)
+    for dev in devices:
+        norm_dev = normalize_identifier(dev["deviceid"])
+        norm_psi = normalize_identifier(dev["psi"])
+        if norm_target in norm_dev or (norm_psi and norm_target in norm_psi):
+            return dev
+
+    # If not found in cache, re-scan once
+    fresh_devices = discover_devices(timeout=2.0)
+    for dev in fresh_devices:
+        if lower_target in dev["name"].lower():
+            return dev
+        norm_dev = normalize_identifier(dev["deviceid"])
+        norm_psi = normalize_identifier(dev["psi"])
+        if norm_target in norm_dev or (norm_psi and norm_target in norm_psi):
+            return dev
+
+    return None
+
+# MARK: - AppleScript UI Automation
+
+def toggle_mirroring_ui(action, target_id=""):
+    script = """
+    on run argv
+        set theAction to item 1 of argv
+        set theTarget to item 2 of argv
+        
+        tell application "System Events"
+            tell process "ControlCenter"
+                try
+                    set mbItem to first menu bar item of menu bar 1 whose description is "Screen Mirroring"
+                on error
+                    return "Error: Screen Mirroring menu bar item not found in Control Center."
+                end try
+                
+                click mbItem
+                repeat with i from 1 to 25
+                    if exists window 1 then exit repeat
+                    delay 0.1
+                end repeat
+                
+                set win to window 1
+                set allEls to entire contents of win
+                set targetElem to missing value
+                
+                if theAction is "stop" and theTarget is "" then
+                    -- Detect ANY active connected session (macOS renders connected display as AXDisclosureTriangle with val 1)
+                    repeat with el in allEls
+                        try
+                            if role of el is "AXDisclosureTriangle" and (value of el as integer) is 1 then
+                                set targetElem to el
+                                exit repeat
+                            end if
+                            if role of el is "AXCheckBox" and (value of el as integer) is 1 then
+                                set targetElem to el
+                                exit repeat
+                            end if
+                        end try
+                    end repeat
+                else
+                    -- Target specific device
+                    repeat with el in allEls
+                        try
+                            set elId to (value of attribute "AXIdentifier" of el) as string
+                            if elId contains theTarget then
+                                set targetElem to el
+                                exit repeat
+                            end if
+                        end try
+                    end repeat
+                end if
+                
+                if targetElem is not missing value then
+                    set elemID to value of attribute "AXIdentifier" of targetElem
+                    set isConnected to false
+                    try
+                        if role of targetElem is "AXDisclosureTriangle" and (value of targetElem as integer) is 1 then
+                            set isConnected to true
+                        else if role of targetElem is "AXCheckBox" and (value of targetElem as integer) is 1 then
+                            set isConnected to true
+                        end if
+                    end try
+                    
+                    if theAction is "start" then
+                        if isConnected then
+                            try
+                                key code 53
+                            end try
+                            return "Already mirroring to " & elemID
+                        else
+                            click targetElem
+                            delay 0.3
+                            try
+                                key code 53
+                            end try
+                            return "Started mirroring to " & elemID
+                        end if
+                    else if theAction is "stop" then
+                        click targetElem
+                        delay 0.3
+                        try
+                            key code 53
+                        end try
+                        return "Stopped mirroring to " & elemID
+                    end if
+                else
+                    try
+                        key code 53
+                    end try
+                    if theAction is "stop" and theTarget is "" then
+                        return "No active screen mirroring session found."
+                    else
+                        return "Error: Could not find display with identifier: " & theTarget
+                    end if
+                end if
+            end tell
+        end tell
+    end run
+    """
+    code, out, err = run_applescript(script, action, target_id)
+    if code != 0 or err:
+        return f"Error: {err or out}"
+    return out
+
+def get_current_session_info():
+    script = """
+    tell application "System Events"
+        tell process "ControlCenter"
+            try
+                set mbItem to first menu bar item of menu bar 1 whose description is "Screen Mirroring"
+                click mbItem
+                repeat with i from 1 to 20
+                    if exists window 1 then exit repeat
+                    delay 0.1
+                end repeat
+                
+                set win to window 1
+                set allEls to entire contents of win
+                set activeDev to ""
+                set activeMode to ""
+                
+                repeat with el in allEls
+                    try
+                        if role of el is "AXDisclosureTriangle" and (value of el as integer) is 1 then
+                            set activeDev to value of attribute "AXIdentifier" of el
+                        end if
+                        if role of el is "AXStaticText" then
+                            set txtVal to value of el as string
+                            if txtVal contains "Currently" then
+                                set activeMode to txtVal
+                            end if
+                        end if
+                    end try
+                end repeat
+                
+                key code 53
+                if activeDev is not "" then
+                    return activeDev & " | " & activeMode
+                else
+                    return ""
+                end if
+            on error
+                try
+                    key code 53
+                end try
+                return ""
+            end try
+        end tell
+    end tell
+    """
+    code, out, _ = run_applescript(script)
+    if out:
+        parts = out.split(" | ")
+        dev_id = parts[0].replace("screen-mirroring-device-AirPlay:", "").strip()
+        mode_str = parts[1].strip() if len(parts) > 1 else ""
+        return {"device_id": dev_id, "mode": mode_str}
+    return None
+
+# MARK: - Native Display Mode Integration (display_ctl)
+
+def apply_display_mode(desired_mode):
+    """Wait for display to register in Quartz and apply mirror or extend via display_ctl."""
+    # Find display_ctl binary
+    script_dir = Path(__file__).resolve().parent
+    repo_root = script_dir.parent.parent
+    display_ctl_bin = script_dir.parent / "display_ctl" / "display_ctl"
+    if not display_ctl_bin.exists():
+        display_ctl_bin = repo_root / "tools" / "display_ctl" / "display_ctl"
+
+    if not display_ctl_bin.exists():
+        print(f"Note: display_ctl not found. Mode '{desired_mode}' not applied automatically.")
+        return
+
+    # Wait up to 5 seconds for secondary display to appear
+    print(f"Configuring display mode '{desired_mode}' via display_ctl...")
+    for _ in range(10):
+        time.sleep(0.5)
+        code, out, _ = run_cmd([str(display_ctl_bin), "list"])
+        if "External / AirPlay" in out or "Secondary Display" in out:
+            break
+
+    cmd = [str(display_ctl_bin), desired_mode]
+    code, out, err = run_cmd(cmd)
+    if code == 0:
+        print(out)
+    else:
+        print(f"Warning: {err or out}")
+
+# MARK: - Commands
+
+def cmd_list():
+    print("Discovering nearby AirPlay devices on network...")
+    devices = discover_devices(timeout=2.0)
+
+    if not devices:
+        print("No AirPlay displays found on the network.")
+        return
+
+    session = get_current_session_info()
+    active_dev_id = session["device_id"] if session else None
+
+    print(f"\nFound {len(devices)} AirPlay device(s):\n")
+    for idx, d in enumerate(devices, 1):
+        target = d["target_id"]
+        is_active = (active_dev_id and (active_dev_id in [d["deviceid"], d["psi"], target]))
+        status_tag = " [CONNECTED]" if is_active else ""
+
+        print(f" {idx}  {d['name']}{status_tag}")
+        print(f"    Target ID:   {target}")
+        if d["deviceid"] and d["deviceid"] != target:
+            print(f"    MAC:         {d['deviceid']}")
+        if d["psi"] and d["psi"] != target:
+            print(f"    UUID (psi):  {d['psi']}")
+        if d["model"]:
+            print(f"    Model:       {d['model']}")
+        print("")
+
+def cmd_start(target_query, mode=None):
+    devices = load_cache() or discover_devices(timeout=1.5)
+    matched = resolve_target(target_query, devices)
+
+    if matched:
+        target_name = matched["name"]
+        # Try deviceid first, then psi
+        target_id = matched["deviceid"] or matched["psi"] or matched["target_id"]
+        print(f"Connecting to '{target_name}' (ID: {target_id})...")
+    else:
+        # Fallback to direct string query
+        target_id = target_query
+        print(f"Connecting to display ID '{target_id}'...")
+
+    res = toggle_mirroring_ui("start", target_id)
+    print(res)
+
+    if "Started" in res or "Already" in res:
+        if mode in ["mirror", "extend"]:
+            apply_display_mode(mode)
+
+def cmd_stop(target_query=None):
+    if target_query:
+        devices = load_cache()
+        matched = resolve_target(target_query, devices)
+        target_id = (matched["deviceid"] or matched["psi"]) if matched else target_query
+        res = toggle_mirroring_ui("stop", target_id)
+    else:
+        res = toggle_mirroring_ui("stop", "")
+    print(res)
+
+def cmd_status():
+    session = get_current_session_info()
+    if not session:
+        print("No active screen mirroring session.")
+        return
+
+    dev_id = session["device_id"]
+    mode = session["mode"] or "Active"
+    devices = load_cache()
+    matched = resolve_target(dev_id, devices)
+    name = matched["name"] if matched else f"Display ({dev_id})"
+
+    print("Active Screen Mirroring Session:")
+    print(f"  Device:  {name}")
+    print(f"  ID:      {dev_id}")
+    print(f"  Status:  {mode}")
+
+def cmd_logs(last_time="2h"):
+    print(f"Searching macOS Unified Log for AirPlay events in the last {last_time}...\n")
+    cmd = [
+        "log", "show",
+        "--predicate",
+        '(process == "AirPlayXPCHelper" OR process == "ControlCenter") AND (eventMessage CONTAINS[c] "stream" OR eventMessage CONTAINS[c] "disconnect" OR eventMessage CONTAINS[c] "teardown" OR eventMessage CONTAINS[c] "bottomup" OR eventMessage CONTAINS[c] "error" OR eventMessage CONTAINS[c] "RTC metrics of sessionType Screen")',
+        "--style", "syslog",
+        "--last", last_time
+    ]
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    lines = [l for l in p.stdout.splitlines() if l.strip()]
+
+    if not lines:
+        print("No recent AirPlay session drop or disconnect events found.")
+        return
+
+    for l in lines[-40:]:
+        print(l)
+
+def cmd_watch(target_query, mode=None):
+    devices = load_cache() or discover_devices(timeout=1.5)
+    matched = resolve_target(target_query, devices)
+    if not matched:
+        die(f"Could not find display matching '{target_query}'")
+
+    target_name = matched["name"]
+    target_id = matched["deviceid"] or matched["psi"] or matched["target_id"]
+
+    print(f"🛡  AirPlay Watchdog active for '{target_name}' (ID: {target_id})")
+    print("Press Ctrl-C to stop.\n")
+
+    def handle_sigint(sig, frame):
+        print("\nStopping AirPlay Watchdog.")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, handle_sigint)
+
+    # Initial connect
+    cmd_start(target_query, mode=mode)
+
+    while True:
+        time.sleep(3.0)
+        session = get_current_session_info()
+        is_active = session and (session["device_id"] in [matched["deviceid"], matched["psi"], target_id])
+
+        if not is_active:
+            ts = time.strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[{ts}] ⚠️ Connection to '{target_name}' dropped! Reconnecting immediately...")
+            cmd_start(target_query, mode=mode)
+            time.sleep(2.0)
+
+# MARK: - Main CLI
+
+def print_usage():
+    print(f"""Usage:
+  {TOOL_NAME} list
+  {TOOL_NAME} start <id|index|name> [--mode mirror|extend]
+  {TOOL_NAME} stop [id|index|name]
+  {TOOL_NAME} status
+  {TOOL_NAME} watch <id|index|name> [--mode mirror|extend]
+  {TOOL_NAME} logs [--last 2h]
+
+Options:
+  --mode <mirror|extend>   Configure display mode upon connection
+  --last <interval>        Log search duration (default: 2h)
+  -h, --help               Show this help message
+  -v, --version            Show tool version
+
+Examples:
+  {TOOL_NAME} list
+  {TOOL_NAME} start 1
+  {TOOL_NAME} start "LG"
+  {TOOL_NAME} start "LG" --mode extend
+  {TOOL_NAME} stop
+  {TOOL_NAME} status
+  {TOOL_NAME} watch "LG"   # Keepalive daemon that auto-reconnects on drop
+  {TOOL_NAME} logs
+""")
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ["-h", "--help", "help"]:
+        print_usage()
+        sys.exit(0)
+
+    if args[0] in ["-v", "--version", "version"]:
+        print(f"{TOOL_NAME} {VERSION}")
+        sys.exit(0)
+
+    command = args[0]
+    subargs = args[1:]
+
+    # Parse options
+    mode = None
+    last_time = "2h"
+
+    filtered_args = []
+    i = 0
+    while i < len(subargs):
+        arg = subargs[i]
+        if arg == "--mode":
+            i += 1
+            if i < len(subargs):
+                mode = subargs[i].lower()
+        elif arg == "--last":
+            i += 1
+            if i < len(subargs):
+                last_time = subargs[i]
+        else:
+            filtered_args.append(arg)
+        i += 1
+
+    if command == "list":
+        cmd_list()
+    elif command == "start":
+        if not filtered_args:
+            die("start requires a target index, name, or device ID (e.g. 1, 'LG', or MAC)")
+        cmd_start(filtered_args[0], mode=mode)
+    elif command == "stop":
+        target = filtered_args[0] if filtered_args else None
+        cmd_stop(target)
+    elif command == "status":
+        cmd_status()
+    elif command == "logs" or command == "diagnose":
+        cmd_logs(last_time=last_time)
+    elif command == "watch" or command == "keepalive":
+        if not filtered_args:
+            die("watch requires a target display (e.g. 1, 'LG', or MAC)")
+        cmd_watch(filtered_args[0], mode=mode)
+    else:
+        die(f"unknown command: {command}")
+
+if __name__ == "__main__":
+    main()

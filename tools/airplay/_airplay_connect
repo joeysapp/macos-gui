@@ -1,0 +1,36 @@
+#compdef airplay_connect
+
+_airplay_connect() {
+    local -a commands
+    commands=(
+        'list:Discover and list nearby AirPlay devices with target IDs and models'
+        'start:Connect to an AirPlay display (by index, friendly name, or device ID)'
+        'stop:Disconnect active AirPlay session (or specify device)'
+        'status:Show current active AirPlay session'
+        'watch:Auto-reconnect watchdog daemon for intermittent AirPlay connections'
+        'logs:View recent macOS Unified Log AirPlay teardown/disconnect events'
+    )
+
+    _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '(-v --version)'{-v,--version}'[Show version]' \
+        '--mode[Configure display mode upon connect]:mode:(mirror extend)' \
+        '--last[Unified log time window]:duration:(30m 1h 2h 6h 24h)' \
+        '1: :->command' \
+        '*:: :->args'
+
+    case $state in
+        command)
+            _describe -t commands 'airplay_connect command' commands
+            ;;
+        args)
+            case $words[1] in
+                start|stop|watch)
+                    _values 'target' '1' '2' 'LG' 'torus'
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_airplay_connect "$@"

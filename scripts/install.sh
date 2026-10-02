@@ -63,20 +63,24 @@ while (( $# )); do
     esac
 done
 
-# Compile background_set if needed
+# Compile Swift tools if needed
 compile_tools() {
-    local swift_src="$REPO_DIR/tools/background_set/background_set.swift"
-    local bin_dest="$REPO_DIR/tools/background_set/background_set"
+    local bg_src="$REPO_DIR/tools/background_set/background_set.swift"
+    local bg_bin="$REPO_DIR/tools/background_set/background_set"
+    local disp_src="$REPO_DIR/tools/display_ctl/display_ctl.swift"
+    local disp_bin="$REPO_DIR/tools/display_ctl/display_ctl"
 
-    if [[ -f "$swift_src" ]] && [[ ! -x "$bin_dest" || "$swift_src" -nt "$bin_dest" ]]; then
-        if command -v swiftc >/dev/null 2>&1; then
+    if command -v swiftc >/dev/null 2>&1; then
+        if [[ -f "$bg_src" ]] && [[ ! -x "$bg_bin" || "$bg_src" -nt "$bg_bin" ]]; then
             print "🔨 Compiling native background_set..."
-            if (( ! DRY_RUN )); then
-                swiftc -O "$swift_src" -o "$bin_dest"
-            fi
-        else
-            print "⚠️  swiftc not found, skipping compilation."
+            (( ! DRY_RUN )) && swiftc -O "$bg_src" -o "$bg_bin"
         fi
+        if [[ -f "$disp_src" ]] && [[ ! -x "$disp_bin" || "$disp_src" -nt "$disp_bin" ]]; then
+            print "🔨 Compiling native display_ctl..."
+            (( ! DRY_RUN )) && swiftc -O "$disp_src" -o "$disp_bin"
+        fi
+    else
+        print "⚠️  swiftc not found, skipping Swift compilation."
     fi
 }
 
@@ -112,7 +116,8 @@ fi
 typeset -a tools
 tools=(
     "$REPO_DIR/tools/background_set/background_set:background_set"
-    "$REPO_DIR/airplay_connect:airplay_connect"
+    "$REPO_DIR/tools/display_ctl/display_ctl:display_ctl"
+    "$REPO_DIR/tools/airplay/airplay_connect:airplay_connect"
     "$REPO_DIR/clipboard-network:clipboard-network"
 )
 
@@ -120,7 +125,8 @@ tools=(
 typeset -a completions
 completions=(
     "$REPO_DIR/tools/background_set/_background_set:_background_set"
-    "$REPO_DIR/_airplay_connect:_airplay_connect"
+    "$REPO_DIR/tools/display_ctl/_display_ctl:_display_ctl"
+    "$REPO_DIR/tools/airplay/_airplay_connect:_airplay_connect"
     "$REPO_DIR/_clipboard-network:_clipboard-network"
 )
 
