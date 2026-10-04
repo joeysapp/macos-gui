@@ -283,6 +283,16 @@ func applyWallpaper(imageURL: URL,
 
 // MARK: - CLI Commands
 
+struct ScreenJSON: Codable {
+    let index: Int
+    let id: Int
+    let name: String
+    let resolution: String
+    let wallpaper: String
+    let mode: String
+    let fillColor: String
+}
+
 func printUsage() {
     print("""
 Usage:
@@ -292,7 +302,7 @@ Usage:
   \(TOOL_NAME) random <directory> [options]
   \(TOOL_NAME) rotate <directory> [interval] [options]
   \(TOOL_NAME) spaces <directory|images...> [options]
-  \(TOOL_NAME) list
+  \(TOOL_NAME) list [options]
   \(TOOL_NAME) get [options]
 
 Modes:
@@ -302,6 +312,7 @@ Modes:
   center   Center at original pixel size without scaling
 
 Options:
+  -j, --json                     Output machine-readable JSON format
   -d, --display <id|index|name>  Target specific display (0, 1, display ID, or name). Default: all displays
   -m, --mode <mode>              Wallpaper scaling mode: fill, fit, stretch, center
   -c, --color <hex|name>         Matte background / fill color (e.g. '#1e1e1e', 'black', 'white')
@@ -317,12 +328,38 @@ Examples:
   \(TOOL_NAME) rotate ~/Pictures/Wallpapers 15m --mode fill
   \(TOOL_NAME) spaces ~/Pictures/Monitors/
   \(TOOL_NAME) list
+  \(TOOL_NAME) list -j
 """)
 }
 
-func cmdList() {
+func cmdList(asJson: Bool = false) {
     let screens = getAllScreens()
     let workspace = NSWorkspace.shared
+
+    if asJson {
+        let items = screens.map { s -> ScreenJSON in
+            let curURL = workspace.desktopImageURL(for: s.screen)?.path ?? "none"
+            let opts = workspace.desktopImageOptions(for: s.screen) ?? [:]
+            let mode = WallpaperMode.from(options: opts).rawValue
+            let colorStr = (opts[.fillColor] as? NSColor).map(colorToHex) ?? "none"
+            return ScreenJSON(
+                index: s.index,
+                id: s.id,
+                name: s.name,
+                resolution: s.resolution,
+                wallpaper: curURL,
+                mode: mode,
+                fillColor: colorStr
+            )
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted]
+        if let data = try? encoder.encode(items), let str = String(data: data, encoding: .utf8) {
+            print(str)
+        }
+        return
+    }
+
     print("Found \(screens.count) connected display(s):\n")
 
     for s in screens {
@@ -342,8 +379,22 @@ func cmdList() {
     }
 }
 
-func cmdGet(targets: [ScreenInfo]) {
+func cmdGet(targets: [ScreenInfo], asJson: Bool = false) {
     let workspace = NSWorkspace.shared
+    if asJson {
+        var dict: [String: String] = [:]
+        for s in targets {
+            let curURL = workspace.desktopImageURL(for: s.screen)?.path ?? "none"
+            dict["display_\(s.index)"] = curURL
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted]
+        if let data = try? encoder.encode(dict), let str = String(data: data, encoding: .utf8) {
+            print(str)
+        }
+        return
+    }
+
     for s in targets {
         let curURL = workspace.desktopImageURL(for: s.screen)?.path ?? "none"
         if targets.count == 1 {
@@ -369,12 +420,15 @@ func main() {
     var color: NSColor? = nil
     var rawColorString: String? = nil
     var dryRun = false
+    var asJson = false
     var positional: [String] = []
 
     var i = 1
     while i < args.count {
         let arg = args[i]
         switch arg {
+        case "-j", "--json", "json":
+            asJson = true
         case "-h", "--help":
             printUsage()
             exit(0)
@@ -428,6 +482,10 @@ func main() {
     let targets = resolveTargetScreens(target: targetDisplay, screens: allScreens)
 
     guard !positional.isEmpty else {
+        if asJson {
+            cmdList(asJson: true)
+            return
+        }
         // If color was specified without positional, treat as solid color command
         if let col = color, let rawCol = rawColorString {
             guard let imgURL = generateSolidColorImage(color: col, hexName: rawCol) else {
@@ -446,10 +504,10 @@ func main() {
 
     switch command {
     case "list", "status":
-        cmdList()
+        cmdList(asJson: asJson)
 
     case "get":
-        cmdGet(targets: targets)
+        cmdGet(targets: targets, asJson: asJson)
 
     case "color":
         guard !rest.isEmpty || rawColorString != nil else {

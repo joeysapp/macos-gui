@@ -1,0 +1,13 @@
+#!/bin/zsh
+
+set -e
+
+DIR="${0:A:h}"
+EXEC="$DIR/tools/airplay-tool/airplay-tool"
+
+if [[ -x "$EXEC" ]]; then
+    exec "$EXEC" "$@"
+fi
+
+print -u2 "error: airplay-tool not found at $EXEC"
+exit 1

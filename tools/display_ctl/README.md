@@ -14,6 +14,7 @@ A lightweight, high-performance native Swift CLI utility for managing macOS disp
 ```bash
 # List all connected displays and their current mirror states
 display_ctl list
+display_ctl list -j
 
 # Mirror external or AirPlay display to main display
 display_ctl mirror

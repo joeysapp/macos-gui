@@ -115,18 +115,24 @@ fi
 # Tools to link: <source_path>:<dest_name>
 typeset -a tools
 tools=(
+    "$REPO_DIR/tools/background_set/background_set:background-set"
     "$REPO_DIR/tools/background_set/background_set:background_set"
     "$REPO_DIR/tools/display_ctl/display_ctl:display_ctl"
-    "$REPO_DIR/tools/airplay/airplay_connect:airplay_connect"
+    "$REPO_DIR/tools/airplay-tool/airplay-tool:airplay-tool"
+    "$REPO_DIR/tools/airplay-tool/airplay-tool:airplay"
+    "$REPO_DIR/tools/airplay-tool/airplay-tool:airplay_connect"
     "$REPO_DIR/clipboard-network:clipboard-network"
 )
 
 # Completions to link: <source_path>:<dest_name>
 typeset -a completions
 completions=(
+    "$REPO_DIR/tools/background_set/_background_set:_background-set"
     "$REPO_DIR/tools/background_set/_background_set:_background_set"
     "$REPO_DIR/tools/display_ctl/_display_ctl:_display_ctl"
-    "$REPO_DIR/tools/airplay/_airplay_connect:_airplay_connect"
+    "$REPO_DIR/tools/airplay-tool/_airplay-tool:_airplay-tool"
+    "$REPO_DIR/tools/airplay-tool/_airplay-tool:_airplay"
+    "$REPO_DIR/tools/airplay-tool/_airplay-tool:_airplay_connect"
     "$REPO_DIR/_clipboard-network:_clipboard-network"
 )
 

@@ -232,12 +232,25 @@ func setResolution(target: DisplayInfo, width: Int, height: Int, refreshRate: Do
     return true
 }
 
-// MARK: - CLI Commands
+struct DisplayJSON: Codable {
+    let index: Int
+    let id: UInt32
+    let name: String
+    let isMain: Bool
+    let isBuiltin: Bool
+    let isMirrored: Bool
+    let mirrorMaster: UInt32
+    let logicalWidth: Int
+    let logicalHeight: Int
+    let pixelWidth: Int
+    let pixelHeight: Int
+    let refreshRate: Double
+}
 
 func printUsage() {
     print("""
 Usage:
-  \(TOOL_NAME) list
+  \(TOOL_NAME) list [options]
   \(TOOL_NAME) mirror [target-display] [master-display]
   \(TOOL_NAME) extend [target-display]
   \(TOOL_NAME) toggle [target-display]
@@ -246,11 +259,13 @@ Usage:
   \(TOOL_NAME) status
 
 Options:
+  -j, --json       Output in JSON format
   -h, --help       Show this help message
   -v, --version    Show tool version
 
 Examples:
   \(TOOL_NAME) list
+  \(TOOL_NAME) list -j
   \(TOOL_NAME) mirror                    # Mirror secondary (AirPlay/external) to main display
   \(TOOL_NAME) mirror 1 0                # Mirror display 1 to display 0
   \(TOOL_NAME) extend                    # Extend secondary display (unmirror)
@@ -260,8 +275,33 @@ Examples:
 """)
 }
 
-func cmdList() {
+func cmdList(asJson: Bool = false) {
     let displays = getOnlineDisplays()
+    if asJson {
+        let jsonItems = displays.map { d in
+            DisplayJSON(
+                index: d.index,
+                id: d.id,
+                name: d.name,
+                isMain: d.isMain,
+                isBuiltin: d.isBuiltin,
+                isMirrored: d.isMirrored,
+                mirrorMaster: d.mirrorMaster,
+                logicalWidth: d.logicalWidth,
+                logicalHeight: d.logicalHeight,
+                pixelWidth: d.pixelWidth,
+                pixelHeight: d.pixelHeight,
+                refreshRate: d.refreshRate
+            )
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted]
+        if let data = try? encoder.encode(jsonItems), let str = String(data: data, encoding: .utf8) {
+            print(str)
+        }
+        return
+    }
+
     print("Found \(displays.count) online display(s):\n")
 
     for d in displays {
@@ -283,10 +323,20 @@ func cmdList() {
 // MARK: - Main CLI Entry Point
 
 func main() {
-    let args = CommandLine.arguments
+    let rawArgs = CommandLine.arguments
+    var asJson = false
+    var args: [String] = []
+
+    for (idx, a) in rawArgs.enumerated() {
+        if idx > 0 && (a == "-j" || a == "--json" || a == "json") {
+            asJson = true
+        } else {
+            args.append(a)
+        }
+    }
 
     if args.count < 2 {
-        cmdList()
+        cmdList(asJson: asJson)
         exit(0)
     }
 
@@ -302,7 +352,7 @@ func main() {
         exit(0)
 
     case "list", "status":
-        cmdList()
+        cmdList(asJson: asJson)
 
     case "mirror":
         let displays = getOnlineDisplays()

@@ -1,13 +1,1 @@
-#!/bin/zsh
-
-set -e
-
-DIR="${0:A:h}"
-EXEC="$DIR/tools/airplay/airplay_connect"
-
-if [[ -x "$EXEC" ]]; then
-    exec "$EXEC" "$@"
-fi
-
-print -u2 "error: airplay_connect not found at $EXEC"
-exit 1
+airplay-tool

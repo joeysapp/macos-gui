@@ -56,6 +56,7 @@ background_set color "#0d1117"
 ```sh
 # List all connected displays and current settings
 background_set list
+background_set list -j
 
 # Apply only to primary display (index 0)
 background_set ~/Pictures/code.png --display 0
