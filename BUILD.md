@@ -1,8 +1,17 @@
+# NEW Requirements
+Moving forward, all scripts must adhere to the strict, shared list of requirements: 
+- **ALL COMMANDS MUST ALWAYS SHIP WITH -h/--help/help | json/-j for output, v/verbose if the script warrants it (haven't seen yet for our single-purpose work here)**
+- **ALL COMMANDS AND NESTED COMMANDS AS WELL AS ALL OF THEIR RESPECTIVE OPTIONS MUST BE PLACED IN HELP/DOCS WITH A ~TERSE EXPLANATION OF HOW TO USE.**
+- **ALL COMMANDS MUST SHIP WITH ZSH AUTOCOMPLETE THAT IS PLACED IN ZSH AUTOCOMPLETIONS ON INSTALL.**
+- **ALL COMMANDS MUST SHARE NAMING CONVENTIONS, DESIGN/USAGE PATTERNS (similar flows, menus, options, nice-to-have extras that ALL SCRIPTS ARE BEING REQUIRED TO DESIGN, E.G.: - IN-BUILT BASIC ROTATING WALLPAPERS - FULLY SHELL HARDENED FOR PIPING, SUBSHELLING, REDIRECTION, ETC.**
+
+---
+
 Read the following concerns in each area of the project with its background, state and goal/planned next state. Note that no naming/paradigm has been landed upon yet and is open for architectural conversation.
 
-(Git tree may be confusing - not sure history there would help you!)
-
 ## Tools
+Needs updating, the general jist at the start:
+
 - background setting
  - targetable displays AND spaces by index/id would be great (perhaps it would set all spaces/all displays by default? targetting by ID is granular setting)
  - full options like stretch/zoom/modes available (with a hex # if they still allow you to place an image w/o zoom/stretch with a background color - doubtful though)
@@ -37,11 +46,8 @@ README
 scripts
   install.sh
 tools
-  background_set     # single script.. or as dir containing the scripts and autocompletes etc?
-  clipboard-network/ # .. dir with scripts/setup??
+  background-set
+  airplay-tool
+  .. rest
   ..
 ```
-
----
-
-Look through the application state / current build reqs. The immediate code to build: background set tool. Write your thoughts to file for review and next steps.

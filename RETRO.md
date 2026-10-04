@@ -2,7 +2,93 @@ Below is the agent final docs on what was changed/added with Airplay today:
 
 ---
 
-aHere is a complete breakdown of the investigations, root-cause findings, and implemented solutions for the AirPlay tool and display controls.  
+  ### 1. Quick Start+: What It Actually Does & Are You Losing Anything?                                                                          
+                                                                                                                                                 
+  #### What It Is                                                                                                                                
+                                                                                                                                                 
+  On LG webOS TVs, Quick Start+ is an S3 suspend-to-RAM state (similar to laptop sleep) rather than a true shutdown. When you turn the TV "off"  
+  with Quick Start+ enabled:                                                                                                                     
+                                                                                                                                                 
+  • The Linux kernel and all userland background daemons remain suspended in RAM.                                                                
+  • When turning the TV back on, it skips the bootloader/kernel init, saving about 5–8 seconds of startup time.                                  
+                                                                                                                                                 
+  #### What You "Lose" by Turning It Off                                                                                                         
+                                                                                                                                                 
+  • Only ~5–8 seconds of boot time: When turning the TV on from a cold state, the webOS boot animation will take ~8–10 seconds instead of ~2–3   
+  seconds.                                                                                                                                       
+                                                                                                                                                 
+  #### What You GAIN (Crucial for Command-Line / API Control)                                                                                    
+                                                                                                                                                 
+  1. Clean Daemon State on Every Boot:                                                                                                           
+  Because Quick Start+ never actually terminates webOS, internal daemons like airplay2d and the websocket service on port 3001 accumulate memory 
+  leaks, open file/socket descriptor exhaustion, and stale state across days of use. Turning it off guarantees a fresh, leak-free webOS          
+  environment every time the TV starts.                                                                                                          
+  2. Reliable Wake-on-LAN (WoL):                                                                                                                 
+  As documented in your ../lgtv/README.md:                                                                                                       
+  │ "If power off ends in deep standby (port 3001 closed), it reports UNCONFIRMED rather than success... Power on is a Wake-on-LAN packet..."    
+  With Quick Start+ ON, the TV's NIC often enters an ambiguous hybrid sleep where port 3001 abruptly hangs or terminates, while WoL broadcast    
+  reception becomes erratic. With Quick Start+ OFF, the TV enters a predictable, standards-compliant deep standby where WoL magic packets        
+  consistently wake the set.                                                                                                                     
+  3. No AirPlay Stream Dropping:                                                                                                                 
+  The -72320 (kConnectionClosedErr) socket drop after 2–3 minutes is almost universally caused by airplay2d hitting memory allocation thresholds 
+  in persistent standby.                                                                                                                         
+  ──────                                                                                                                                         
+  ### 2. Cold Power Cycle: Why 60 Seconds?                                                                                                       
+                                                                                                                                                 
+  Unplugging the TV from the wall for 60 seconds drains the power supply's capacitors and completely flushes the volatile SoC DRAM. A standard   
+  software "reboot" or remote power cycle often retains suspended kernel pages.                                                                  
+  ──────                                                                                                                                         
+  ### 3. Disabling IPv6: The Technical Reason                                                                                                    
+                                                                                                                                                 
+  • Dual-Stack Socket Flapping:                                                                                                                  
+  The LG webOS network stack attempts to bind AirPlay RTSP/HTTP services to both IPv4 and IPv6 SLAAC/link-local addresses.                       
+  • Router Advertisement (RA) Triggers Socket Resets:                                                                                            
+  Whenever your local router broadcasts an IPv6 Router Advertisement (RA) or neighbor discovery packet, webOS triggers an interface              
+  reconfiguration event:                                                                                                                         
+    airportd: Driver Event: APPLE80211_M_REALTIME_SESSION_NOTIFICATION (en0)                                                                     
+  On LG webOS, this interface refresh resets unbuffered TCP streams (Connection closed to 192.168.1.67:40961), which immediately kills the       
+  AirPlay video pipeline.                                                                                                                        
+  • Fix: Forcing the TV to IPv4-only creates a deterministic, single-stack connection with zero multicast route resets.                          
+  ──────                                                                                                                                         
+  ### 4. Setting & Controlling via ../lgtv (topic tv call ...)                                                                                   
+                                                                                                                                                 
+  Yes! LG webOS exposes these under com.webos.settingsservice. We have updated ../lgtv/README.md with these exact commands:                      
+                                                                                                                                                 
+  #### Quick Start+                                                                                                                              
+                                                                                                                                                 
+  • Query:                                                                                                                                       
+    topic tv call get_system_settings other '["quickStartMode"]'                                                                                 
+                                                                                                                                                 
+  • Set to OFF:                                                                                                                                  
+    topic tv call set_settings other '{"quickStartMode": "off"}'                                                                                 
+                                                                                                                                                 
+                                                                                                                                                 
+  #### IPv6                                                                                                                                      
+                                                                                                                                                 
+  • Query:                                                                                                                                       
+    topic tv call get_system_settings network '["ipv6"]'                                                                                         
+                                                                                                                                                 
+  • Set to OFF:                                                                                                                                  
+    topic tv call set_settings network '{"ipv6": "off"}'                                                                                         
+                                                                                                                                                 
+                                                                                                                                                 
+  #### Sleep / Auto-Off Timers                                                                                                                   
+                                                                                                                                                 
+  • Query:                                                                                                                                       
+    topic tv call get_system_settings time '["autoOff15Min", "sleepTimer"]'                                                                      
+                                                                                                                                                 
+  • Set to OFF:                                                                                                                                  
+    topic tv call set_settings time '{"autoOff15Min": "off"}'                                                                                    
+                                                                                                                                                 
+                                                                                                                                                 
+  (Note: If setting via topic tv requires the TV to accept the change, webOS may request a restart for network and Quick Start changes to take   
+  effect).                                                                                                                                       
+
+
+
+---
+
+Here is a complete breakdown of the investigations, root-cause findings, and implemented solutions for the AirPlay tool and display controls.  
   ──────                                                                                                                                         
   ### 1. Root Cause: Why the LG TV Disconnects & How to Search Console Logs                                                                      
                                                                                                                                                  
