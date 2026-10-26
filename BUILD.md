@@ -35,6 +35,9 @@ Spend time comprehensively refining the two existing airplay files into a comple
 
 **IMPORTANT**: Following the new rule to include any and all relevant/useful controls for airplay, I suggest perhaps a default/.. other script to disable/enable bluetooth, view logs (like airplay) would be a good step forward there. 
 
+- 2026-10-26 (built, branch `bluetooth-tool`): `tools/bluetooth-tool` (Swift/IOBluetooth, also `bluetooth`) with list, status, power [on|off|toggle], connect/disconnect/toggle, wait, watch, logs, alias; `-j` on all, zsh completion, wired into install.sh. Changes are read-back transactions (exit 4 if the state never reads back), and `power off` refuses (exit 3) while a Bluetooth keyboard/mouse/trackpad is connected unless `--force`. Power set uses the private blueutil API and is not yet run on hardware; see tools/bluetooth-tool/README.md. Also fixed install.sh `--uninstall --dry-run`, which used to abort after the first entry.
+- 2026-10-26: install.sh refuses (exit 3) while any of the tools is running, listing the processes, since a Swift rebuild rewrites the binary in place; `--force` skips it. Asked for so a reinstall is safe whenever nothing is using the tools.
+
 # Roadmap
 
 - (High value and likely everywhere) Frankly, nearly any user-driven action on macOS could be useful in a script/automation/tool given enough time. I am talking about both having a kind of a single or handful of semi-glossary acting, no-frills scripts that just surface all of the entirely user-facing/open game controls/tooling that are either walled or hidden behind osascript's rigidity/difficulties, 

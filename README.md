@@ -37,6 +37,17 @@ Native Swift display arrangement and resolution utility built directly with Quar
 ### 4. `clipboard-network`
 Zero-quote length-prefixed clipboard sharing bridge between macOS (`pbpaste`) and Windows SSH environments.
 
+### 5. `bluetooth-tool` (alias: `bluetooth`)
+Native Swift Bluetooth CLI on IOBluetooth. Full reference: [`tools/bluetooth-tool/README.md`](tools/bluetooth-tool/README.md).
+- **Devices**: `list` / `status` with stable 1-based indices; target by index, alias, name substring or address.
+- **Read-back transactions**: `connect`, `disconnect`, `toggle`, `power on|off|toggle` act only when needed (`changed:false` otherwise) and report the state read back; no read-back in time = exit 4.
+- **Keyboard guard**: `power off` refuses (exit 3) while a Bluetooth keyboard, mouse or trackpad is connected, naming it, unless `--force`.
+- **Waiting & events**: `wait <target> connected|disconnected -t 30`, `watch` (one line per connect/disconnect, JSON Lines with `-j`).
+- **Logs**: `logs --last 2h --grep text` / `logs -f` over `bluetoothd` + `com.apple.bluetooth`.
+- **Aliases**: `alias set receiver dh590` stores the device address in `~/.config/macos-gui/bluetooth_aliases.json`.
+- **JSON**: `-j` on every command, a fixed contract (consumed by Topic). Exit codes: 0 ok, 1 failed, 2 usage, 3 refused, 4 timed out / unconfirmed.
+- **Permission**: embeds an Info.plist with `NSBluetoothAlwaysUsageDescription`; a parent app (e.g. TopicGet.app) needs the key too.
+
 ---
 
 ## Installation
@@ -51,6 +62,8 @@ To preview without modifying anything:
 ```bash
 ./scripts/install.sh --dry-run
 ```
+
+It won't install while any of the tools is running (a `watch`, a wallpaper `rotate`, a call from topic-get): it lists those processes and exits 3, because a Swift rebuild rewrites the binary in place and can kill whatever runs it. `--dry-run` says it would refuse; `--force` installs anyway.
 
 Ensure the following is in your `~/.zshrc`:
 ```zsh
@@ -85,4 +98,13 @@ display_ctl mirror                         # Mirror secondary display
 display_ctl extend                         # Extend secondary display
 display_ctl toggle                         # Toggle mirroring mode
 display_ctl resolutions "LG"               # List available display modes
+
+# Bluetooth
+bluetooth-tool list -j                     # Paired devices (index, address, kind, connected)
+bluetooth-tool status                      # Power, connected devices, power-off guard verdict
+bluetooth-tool disconnect receiver         # Read-back disconnect (alias, index, name or address)
+bluetooth-tool wait "MAGIC KEEB" connected -t 30   # Block until it connects (exit 4 on timeout)
+bluetooth-tool power off                   # Refuses while a BT keyboard/mouse/trackpad is connected
+bluetooth-tool watch -j                    # JSON Lines per connect/disconnect
+bluetooth-tool logs --last 30m --grep disconnect   # Unified log (bluetoothd)
 ```

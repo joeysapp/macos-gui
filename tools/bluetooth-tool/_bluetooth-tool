@@ -1,0 +1,143 @@
+#compdef bluetooth-tool bluetooth
+
+# Zsh completion for bluetooth-tool (alias: bluetooth).
+# Device targets are read live from `bluetooth-tool list -j`; aliases from the alias file.
+
+_bluetooth-tool_aliases() {
+    local -a names
+    local file=${HOME}/.config/macos-gui/bluetooth_aliases.json line
+    [[ -r $file ]] || return 1
+    while IFS= read -r line; do
+        [[ $line =~ '"([^"]+)"[[:space:]]*:[[:space:]]*"([^"]*)"' ]] && names+=("${match[1]}:-> ${match[2]}")
+    done < $file
+    _describe -t aliases 'alias' names
+}
+
+_bluetooth-tool_targets() {
+    local tool=${commands[bluetooth-tool]:-${commands[bluetooth]}}
+    local -a devices objs
+    local json o idx name addr kind sep='},{'
+    if [[ -n $tool ]]; then
+        json=$("$tool" list -j 2>/dev/null)
+        objs=(${(ps:$sep:)json})
+        for o in $objs; do
+            [[ $o =~ '"index":([0-9]+)' ]] || continue
+            idx=${match[1]}
+            [[ $o =~ '"name":"(([^"\\]|\\.)*)"' ]] && name=${match[1]}
+            [[ $o =~ '"address":"([0-9a-f:]+)"' ]] && addr=${match[1]}
+            [[ $o =~ '"kind":"([^"]*)"' ]] && kind=${match[1]}
+            devices+=("${name//:/\\:}:#${idx} ${kind} ${addr}")
+        done
+    fi
+    _bluetooth-tool_aliases
+    if (( $#devices )); then
+        _describe -t devices 'paired device (name)' devices
+    else
+        _message 'target: index, alias, name substring or address'
+    fi
+}
+
+_bluetooth-tool() {
+    local curcontext="$curcontext" state line ret=1
+    typeset -A opt_args
+
+    local -a subcmds   # not 'commands': that would shadow zsh's $commands hash in the helpers
+    subcmds=(
+        'list:Paired devices with stable 1-based indices'
+        'status:Power and connected devices'
+        'power:Print power, or set it and read it back (on|off|toggle)'
+        'connect:Connect a paired device'
+        'disconnect:Disconnect a device'
+        'toggle:Connect if disconnected, else disconnect'
+        'wait:Block until a device is connected or disconnected'
+        'watch:One line per connect/disconnect until Ctrl-C'
+        'logs:Unified log for bluetoothd and com.apple.bluetooth'
+        'alias:Manage device aliases (list, set, rm)'
+        'help:Help for a command'
+    )
+
+    local -a global_opts timeout_opt
+    global_opts=(
+        '(-j --json)'{-j,--json}'[JSON on stdout]'
+        '(-v --verbose)'{-v,--verbose}'[API calls, return codes and timings on stderr]'
+        '(-h --help)'{-h,--help}'[Show help]'
+    )
+    timeout_opt=('(-t --timeout)'{-t,--timeout}'[Read-back limit in seconds (default 10)]:seconds:')
+
+    _arguments -C \
+        $global_opts \
+        '(-V --version)'{-V,--version}'[Show version]' \
+        '1: :->command' \
+        '*:: :->args' && ret=0
+
+    case $state in
+        command)
+            _describe -t commands 'bluetooth-tool command' subcmds && ret=0
+            ;;
+        args)
+            case $words[1] in
+                list|status)
+                    _arguments $global_opts && ret=0
+                    ;;
+                power)
+                    _arguments $global_opts $timeout_opt \
+                        '--force[Turn off even if that cuts off a Bluetooth keyboard, mouse or trackpad]' \
+                        '1:state:((on\:"Turn Bluetooth on" off\:"Turn Bluetooth off (guarded)" toggle\:"Flip the current state"))' \
+                        && ret=0
+                    ;;
+                connect|disconnect|toggle)
+                    _arguments $global_opts $timeout_opt '1:target:_bluetooth-tool_targets' && ret=0
+                    ;;
+                wait)
+                    _arguments $global_opts $timeout_opt \
+                        '1:target:_bluetooth-tool_targets' \
+                        '2:state:(connected disconnected)' && ret=0
+                    ;;
+                watch)
+                    _arguments $global_opts '1::target:_bluetooth-tool_targets' && ret=0
+                    ;;
+                logs)
+                    _arguments $global_opts \
+                        '(-f --follow --last)--last[Time window: <n>m|h|d or boot (default 2h)]:window:(10m 30m 1h 2h 6h 24h boot)' \
+                        '(--last -n --limit -f --follow)'{-f,--follow}'[Stream new entries until Ctrl-C]' \
+                        '--grep[Only messages containing text (case-insensitive)]:text:' \
+                        '(-f --follow -n --limit)'{-n,--limit}'[Newest N entries (default 200; 0 = all)]:count:' \
+                        && ret=0
+                    ;;
+                alias|aliases)
+                    _arguments -C $global_opts '1:action:->alias_action' '*:: :->alias_args' && ret=0
+                    case $state in
+                        alias_action)
+                            local -a actions
+                            actions=(
+                                'list:Aliases and the device each resolves to'
+                                'set:Point an alias at a device: set <alias> <target>'
+                                'rm:Remove an alias: rm <alias>'
+                            )
+                            _describe -t actions 'alias action' actions && ret=0
+                            ;;
+                        alias_args)
+                            case $words[1] in
+                                set)
+                                    _arguments $global_opts '1:alias name:' '2:target:_bluetooth-tool_targets' && ret=0
+                                    ;;
+                                rm|remove)
+                                    _arguments $global_opts '1:alias:_bluetooth-tool_aliases' && ret=0
+                                    ;;
+                                list)
+                                    _arguments $global_opts && ret=0
+                                    ;;
+                            esac
+                            ;;
+                    esac
+                    ;;
+                help)
+                    _describe -t commands 'command' subcmds && ret=0
+                    ;;
+            esac
+            ;;
+    esac
+    return ret
+}
+
+_bluetooth-tool "$@"

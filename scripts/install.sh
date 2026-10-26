@@ -12,6 +12,7 @@ COMP_DIR="${INSTALL_COMP_DIR:-$DEFAULT_COMPLETION_DIR}"
 
 DRY_RUN=0
 UNINSTALL=0
+FORCE=0
 
 usage() {
     cat <<EOF
@@ -23,11 +24,16 @@ Options:
   --comp-dir <dir>       Directory to install completions (default: $DEFAULT_COMPLETION_DIR)
   --uninstall            Remove symlinked tools and completions
   -n, --dry-run          Show what would be installed/removed without doing it
+  --force                Install even while one of the tools is running
   -h, --help             Show this help message
 
 Description:
   Installs individual macOS GUI tools and their zsh autocompletions.
   Each tool remains an independent utility (no monolithic wrapper).
+
+  It refuses (exit 3) while any of the tools is running (a watch, a wallpaper
+  rotation, a call from topic-get) and lists them: a Swift rebuild rewrites the
+  binary in place, which can kill the process running it. --force skips that.
 EOF
 }
 
@@ -43,6 +49,10 @@ while (( $# )); do
             ;;
         --uninstall)
             UNINSTALL=1
+            shift
+            ;;
+        --force)
+            FORCE=1
             shift
             ;;
         --bin-dir)
@@ -69,15 +79,28 @@ compile_tools() {
     local bg_bin="$REPO_DIR/tools/background_set/background_set"
     local disp_src="$REPO_DIR/tools/display_ctl/display_ctl.swift"
     local disp_bin="$REPO_DIR/tools/display_ctl/display_ctl"
+    local bt_src="$REPO_DIR/tools/bluetooth-tool/bluetooth-tool.swift"
+    local bt_bin="$REPO_DIR/tools/bluetooth-tool/bluetooth-tool"
+    local bt_plist="$REPO_DIR/tools/bluetooth-tool/Info.plist"
 
+    # `if` blocks, not `(( ! DRY_RUN )) && ...`: under `set -e` a false `&&` as a function's
+    # last status aborts the script in --dry-run.
     if command -v swiftc >/dev/null 2>&1; then
         if [[ -f "$bg_src" ]] && [[ ! -x "$bg_bin" || "$bg_src" -nt "$bg_bin" ]]; then
             print "🔨 Compiling native background_set..."
-            (( ! DRY_RUN )) && swiftc -O "$bg_src" -o "$bg_bin"
+            if (( ! DRY_RUN )); then swiftc -O "$bg_src" -o "$bg_bin"; fi
         fi
         if [[ -f "$disp_src" ]] && [[ ! -x "$disp_bin" || "$disp_src" -nt "$disp_bin" ]]; then
             print "🔨 Compiling native display_ctl..."
-            (( ! DRY_RUN )) && swiftc -O "$disp_src" -o "$disp_bin"
+            if (( ! DRY_RUN )); then swiftc -O "$disp_src" -o "$disp_bin"; fi
+        fi
+        # Info.plist is embedded (NSBluetoothAlwaysUsageDescription) so the binary can get its own TCC prompt.
+        if [[ -f "$bt_src" ]] && [[ ! -x "$bt_bin" || "$bt_src" -nt "$bt_bin" || "$bt_plist" -nt "$bt_bin" ]]; then
+            print "🔨 Compiling native bluetooth-tool (embedding Info.plist)..."
+            if (( ! DRY_RUN )); then
+                swiftc -O "$bt_src" -o "$bt_bin" \
+                    -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$bt_plist"
+            fi
         fi
     else
         print "⚠️  swiftc not found, skipping Swift compilation."
@@ -90,10 +113,14 @@ install_symlink() {
 
     if (( UNINSTALL )); then
         if [[ -L "$dest" || -f "$dest" ]]; then
-            print "  🗑  Removing $dest"
-            (( ! DRY_RUN )) && rm -f "$dest"
+            if (( DRY_RUN )); then
+                print "  🗑  [dry-run] Remove $dest"
+            else
+                print "  🗑  Removing $dest"
+                rm -f "$dest"
+            fi
         fi
-        return
+        return 0
     fi
 
     if (( DRY_RUN )); then
@@ -105,13 +132,6 @@ install_symlink() {
     fi
 }
 
-if (( UNINSTALL )); then
-    print "Uninstalling macOS GUI tools..."
-else
-    print "Installing macOS GUI tools..."
-    compile_tools
-fi
-
 # Tools to link: <source_path>:<dest_name>
 typeset -a tools
 tools=(
@@ -121,6 +141,8 @@ tools=(
     "$REPO_DIR/tools/airplay-tool/airplay-tool:airplay-tool"
     "$REPO_DIR/tools/airplay-tool/airplay-tool:airplay"
     "$REPO_DIR/tools/airplay-tool/airplay-tool:airplay_connect"
+    "$REPO_DIR/tools/bluetooth-tool/bluetooth-tool:bluetooth-tool"
+    "$REPO_DIR/tools/bluetooth-tool/bluetooth-tool:bluetooth"
     "$REPO_DIR/clipboard-network:clipboard-network"
 )
 
@@ -133,8 +155,43 @@ completions=(
     "$REPO_DIR/tools/airplay-tool/_airplay-tool:_airplay-tool"
     "$REPO_DIR/tools/airplay-tool/_airplay-tool:_airplay"
     "$REPO_DIR/tools/airplay-tool/_airplay-tool:_airplay_connect"
+    "$REPO_DIR/tools/bluetooth-tool/_bluetooth-tool:_bluetooth-tool"
+    "$REPO_DIR/tools/bluetooth-tool/_bluetooth-tool:_bluetooth"
     "$REPO_DIR/_clipboard-network:_clipboard-network"
 )
+
+# Processes running any of the tools right now, as "pid command", one per line.
+# Matched on the tool's own name at the end of a path or command word, so
+# bluetoothd and AirPlayXPCHelper aren't mistaken for bluetooth and airplay.
+tools_in_use() {
+    local -a names
+    local entry
+    for entry in "${tools[@]}"; do
+        names+=("${entry##*:}" "${${entry%%:*}:t}")
+    done
+    local -a uniq=(${(u)names})
+    local pattern="(^|/)(${(j:|:)uniq})( |\$)"
+    ps -axo pid=,command= | awk -v me=$$ '$1 != me' | grep -E "$pattern" | grep -v -E "grep -E|scripts/install.sh" || true
+}
+
+if (( UNINSTALL )); then
+    print "Uninstalling macOS GUI tools..."
+else
+    running="$(tools_in_use)"
+    if [[ -n "$running" ]] && (( ! FORCE )); then
+        if (( DRY_RUN )); then
+            print "⚠️  [dry-run] would refuse: these are running one of the tools:"
+            print -- "$running" | sed 's/^/    /'
+        else
+            print -u2 "Not installing while these are running one of the tools:"
+            print -- "$running" | sed 's/^/    /' >&2
+            print -u2 "Wait for them (or stop them), or rerun with --force."
+            exit 3
+        fi
+    fi
+    print "Installing macOS GUI tools..."
+    compile_tools
+fi
 
 print "\nBinaries (to $BIN_DIR):"
 for entry in "${tools[@]}"; do
