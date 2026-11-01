@@ -49,7 +49,7 @@ without the control asked for is exit 3 with the reason, never a fake success.
 | `--rate <Hz>` | record | Resample to this rate (8000..384000) |
 | `--float` | record | 32-bit float instead of 24-bit PCM |
 | `-o, --out <file.wav>` | record | Output path (default `./record-YYYYMMDD-HHMMSS.wav`) |
-| `--force` | record | Overwrite `--out` if it exists (otherwise exit 3) |
+| `--force` | record | Overwrite `--out` if it exists (otherwise exit 3), once recording has started |
 | `--watch` | level | One line per 100 ms until Ctrl-C (exit 0) |
 
 Short flags cluster (`-jv`), values take `-s 2`, `-s2`, `--seconds 2` or `--seconds=2`, `--`
@@ -152,9 +152,11 @@ Stub (play, record, level, volume, mute, default set): `{"uid":"BuiltInSpeakerDe
   the first loud block, that many seconds of quiet blocks in a row stop it (the trailing quiet is
   kept). Levels in the result are measured on the captured audio, before `--rate`. Refuses lengths
   that would pass the 4 GB WAV limit. A device that stops delivering audio for 2 s (unplugged) ends
-  the recording with an error and keeps the file. The capture starts before the file is created, so
-  a capture that can't start leaves no empty file. A second Ctrl-C exits at once; the file is still
-  valid up to the last header rewrite.
+  the recording with an error and keeps the file. A new `--out` file is created before the capture
+  starts (a bad path never opens the device) and removed again if the capture can't start (no
+  permission, device gone); an existing file under `--force` is truncated only once the capture
+  runs, so a recording that never starts can't cost it. A second Ctrl-C exits at once; the file is
+  still valid up to the last header rewrite.
 - **level** uses the same capture; `--watch` windows are 100 ms of audio each.
 - **volume** uses the control macOS's own volume slider uses (`kAudioHardwareServiceDeviceProperty_
   VirtualMainVolume` via AudioObject), else the main element's `VolumeScalar`, else every channel's.
@@ -203,6 +205,16 @@ swiftc -O tools/audio-tool/audio-tool.swift -o tools/audio-tool/audio-tool \
 
 Each rebuild changes the ad-hoc signature, so a TCC grant made to the binary itself may need
 re-granting. Uses the Synchronization module (macOS 15+).
+
+`tools/audio-tool/check.sh` runs 18 failure paths (record `--out` that exists, is read-only, is a
+dangling symlink, sits in a missing or read-only directory, is a directory, has an over-long name;
+devices or channels that aren't there; play of missing, non-audio or truncated files) and checks
+each exit code, its JSON error, that nothing crashed, and that no file was created or changed.
+Nothing is played or recorded. By default it builds an AddressSanitizer copy in a temp dir, so a
+memory bug exits 86 with a report instead of crashing (a crash pops macOS's "quit unexpectedly"
+dialog); `--binary tools/audio-tool/audio-tool` checks the release build. It also fails if a new
+audio-tool crash report appears in `~/Library/Logs/DiagnosticReports`. With the 2026-11-01
+`WavWriter.init` double free put back, 4 of the cases fail with exit 86 and no crash.
 
 ## Examples
 

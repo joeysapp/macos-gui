@@ -97,7 +97,14 @@ func dbJSON(_ x: Double) -> JSON { x.isFinite ? .num(roundTo(x, 2)) : .null }
 func dbText(_ x: Double) -> String { x.isFinite ? String(format: "%.1f", x) : "-inf" }
 func kHz(_ r: Double) -> String { r == 0 ? "?" : (r / 1000 == (r / 1000).rounded() ? "\(Int(r / 1000)) kHz" : String(format: "%g kHz", r / 1000)) }
 
+/// Run (newest first) by fail() before it exits: undo what a command has set up so far, such as
+/// a recording file that no audio will reach.
+var failCleanups: [() -> Void] = []
+
 func fail(_ code: Int32, _ msg: String, device: Dev? = nil, extra: [(String, JSON)] = []) -> Never {
+    let cleanups = failCleanups
+    failCleanups = []
+    cleanups.reversed().forEach { $0() }
     if jsonMode {
         var o: [(String, JSON)] = [("success", .bool(false)), ("error", .str(msg))]
         if let d = device { o.append(("device", d.stub)) }
@@ -876,8 +883,13 @@ final class SignalBox { let caught = Atomic<Int32>(0) }
 let signals = SignalBox()
 var keepAlive: [AnyObject] = []
 
+var signalsTrapped = false
+
 /// SIGINT/SIGTERM/SIGHUP set a flag the command's loop checks; a second one exits at once.
+/// Idempotent: two sources for one signal would read one Ctrl-C as the second.
 func trapSignals() {
+    if signalsTrapped { return }
+    signalsTrapped = true
     for sig in [SIGINT, SIGTERM, SIGHUP] {
         signal(sig, SIG_IGN)
         let s = DispatchSource.makeSignalSource(signal: sig, queue: .global())
@@ -1352,7 +1364,13 @@ func requireMicrophone() {
         let sem = DispatchSemaphore(value: 0)
         let granted = Atomic<Bool>(false)
         AVCaptureDevice.requestAccess(for: .audio) { ok in granted.store(ok, ordering: .releasing); sem.signal() }
-        if sem.wait(timeout: .now() + 60) == .timedOut { fail(ExitCode.unconfirmed, "no answer to the Microphone permission prompt in 60 s. \(micHint)") }
+        var answered = false
+        for _ in 0..<600 {   // 60 s, in slices, so Ctrl-C ends the wait through fail()'s cleanups
+            if sem.wait(timeout: .now() + 0.1) == .success { answered = true; break }
+            let sig = caughtSignal()
+            if sig != 0 { fail(ExitCode.signal(sig), "interrupted while waiting for the Microphone permission answer") }
+        }
+        if !answered { fail(ExitCode.unconfirmed, "no answer to the Microphone permission prompt in 60 s. \(micHint)") }
         if !granted.load(ordering: .acquiring) { fail(ExitCode.failed, "Microphone access was not granted. \(micHint)") }
     default:
         fail(ExitCode.failed, "Microphone permission reads '\(state)', so input would be silence. \(micHint)")
@@ -1375,11 +1393,11 @@ func startCapture(_ dev: Dev, _ chans: [Int]) -> Capture {
     let allSlots = channelSlots(dev.id, .input)
     let rate = caGet(dev.id, paddr(kAudioDevicePropertyNominalSampleRate), Float64(0)) ?? dev.rate
     guard rate > 0, allSlots.count >= dev.inputs else { fail(ExitCode.failed, "can't read the input layout of '\(dev.name)'", device: dev) }
+    trapSignals()
     requireMicrophone()
     let ring = Ring(frames: Int(rate * 10), channels: chans.count)
     let io = CaptureIO(ring: ring, slots: chans.map { allSlots[$0 - 1] })
     let session = IOSession(dev.id)
-    trapSignals()
     if let why = session.start(.input, { _, input, inputTime, out, _ in io.capture(input, inputTime, out) }) {
         fail(ExitCode.failed, "can't start '\(dev.name)': \(why)", device: dev)
     }
@@ -1438,22 +1456,30 @@ func watchdog(_ cap: Capture, _ lastCalls: inout Int, _ lastProgress: inout Date
     return nil
 }
 
+func posixError(_ e: Int32) -> NSError {
+    NSError(domain: NSPOSIXErrorDomain, code: Int(e), userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(e))])
+}
+
 /// Writes RIFF/WAVE (PCM 24-bit or IEEE float 32-bit, EXTENSIBLE above 2 channels) and rewrites
 /// the header sizes as it goes, so the file is valid at every moment.
+///
+/// Resources start empty (fd -1, no buffer) and deinit releases only what is held. When an init
+/// throws once every stored property is set, Swift runs deinit on the half-built object; freeing a
+/// buffer the init had already freed was the 2026-11-01 SIGABRT. No path can do that now.
 final class WavWriter {
-    let fd: Int32
     let path: String
     let channels: Int
     let rate: Int
     let float: Bool
     let bytesPerSample: Int
+    private var fd: Int32 = -1                          // -1 = not open (never opened, or closed)
+    private var bytes: UnsafeMutablePointer<UInt8>? = nil
+    private var cap = 0
     private(set) var frames = 0
     private var dataBytes = 0
-    private var headerLen = 0
-    private var dataSizeAt = 0
-    private var factAt: Int? = nil
-    private var bytes: UnsafeMutablePointer<UInt8>
-    private var cap = 0
+    private let header: [UInt8]
+    private let dataSizeAt: Int
+    private let factAt: Int?
 
     init(path: String, channels: Int, rate: Int, float: Bool, overwrite: Bool) throws {
         self.path = path
@@ -1461,14 +1487,29 @@ final class WavWriter {
         self.rate = rate
         self.float = float
         bytesPerSample = float ? 4 : 3
-        cap = 4096 * channels * bytesPerSample
-        bytes = .allocate(capacity: cap)
-        // Every stored property is set from here on, so a throw runs deinit: it frees `bytes`.
-        fd = open(path, O_WRONLY | O_CREAT | (overwrite ? O_TRUNC : O_EXCL), 0o644)
-        if fd < 0 {
+        let built = WavWriter.header(channels: channels, rate: rate, bytesPerSample: bytesPerSample, float: float)
+        header = built.0
+        dataSizeAt = built.1
+        factAt = built.2
+        let f = open(path, O_WRONLY | O_CREAT | (overwrite ? O_TRUNC : O_EXCL), 0o644)
+        if f < 0 { throw posixError(errno) }
+        fd = f
+        guard writeAll(header, count: header.count) else {
             let e = errno
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(e), userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(e))])
+            Darwin.close(fd)
+            fd = -1
+            unlink(path)
+            throw posixError(e)
         }
+    }
+
+    deinit {
+        if fd >= 0 { Darwin.close(fd) }
+        bytes?.deallocate()
+    }
+
+    /// The header bytes, and where the data size and fact frame count go.
+    private static func header(channels: Int, rate: Int, bytesPerSample: Int, float: Bool) -> ([UInt8], Int, Int?) {
         var h: [UInt8] = []
         func u16(_ v: Int) { h += [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF)] }
         func u32(_ v: Int) { h += [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF), UInt8((v >> 16) & 0xFF), UInt8((v >> 24) & 0xFF)] }
@@ -1486,17 +1527,13 @@ final class WavWriter {
         } else {
             u32(16); u16(1); u16(channels); u32(rate); u32(rate * block); u16(block); u16(bits)
         }
-        if float { tag("fact"); u32(4); factAt = h.count; u32(0) }
-        tag("data"); dataSizeAt = h.count; u32(0)
-        headerLen = h.count
-        guard writeAll(h, count: h.count) else {
-            let e = errno
-            Darwin.close(fd)
-            unlink(path)
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(e), userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(e))])
-        }
+        var fact: Int? = nil
+        if float { tag("fact"); u32(4); fact = h.count; u32(0) }
+        tag("data")
+        let dataSize = h.count
+        u32(0)
+        return (h, dataSize, fact)
     }
-    deinit { bytes.deallocate() }
 
     private func writeAll(_ p: UnsafeRawPointer, count: Int) -> Bool {
         var off = 0
@@ -1509,20 +1546,26 @@ final class WavWriter {
     }
 
     func append(_ x: UnsafePointer<Float>, frames n: Int) -> Bool {
+        guard fd >= 0 else { return false }
         let count = n * channels
         let need = count * bytesPerSample
-        if need > cap { bytes.deallocate(); cap = need; bytes = .allocate(capacity: cap) }
+        if bytes == nil || need > cap {
+            bytes?.deallocate()
+            cap = max(need, 4096 * channels * bytesPerSample)
+            bytes = .allocate(capacity: cap)
+        }
+        guard let b = bytes else { return false }
         if float {
-            memcpy(bytes, x, need)   // little-endian host
+            memcpy(b, x, need)   // little-endian host
         } else {
             for i in 0..<count {
                 let v = Int32(max(-8_388_608, min(8_388_607, (Double(x[i]) * 8_388_608).rounded())))
-                bytes[3 * i] = UInt8(truncatingIfNeeded: v)
-                bytes[3 * i + 1] = UInt8(truncatingIfNeeded: v >> 8)
-                bytes[3 * i + 2] = UInt8(truncatingIfNeeded: v >> 16)
+                b[3 * i] = UInt8(truncatingIfNeeded: v)
+                b[3 * i + 1] = UInt8(truncatingIfNeeded: v >> 8)
+                b[3 * i + 2] = UInt8(truncatingIfNeeded: v >> 16)
             }
         }
-        guard writeAll(bytes, count: need) else { return false }
+        guard writeAll(b, count: need) else { return false }
         frames += n
         dataBytes += need
         return true
@@ -1535,17 +1578,21 @@ final class WavWriter {
 
     /// Header sizes for what has been written so far.
     func patch() -> Bool {
+        guard fd >= 0 else { return false }
         let padByte = dataBytes % 2
-        var ok = put32(headerLen - 8 + dataBytes + padByte, at: 4) && put32(dataBytes, at: dataSizeAt)
+        var ok = put32(header.count - 8 + dataBytes + padByte, at: 4) && put32(dataBytes, at: dataSizeAt)
         if let f = factAt { ok = ok && put32(frames, at: f) }
         return ok
     }
 
+    /// Pad, final sizes, close. Safe to call twice (the second call reports false).
     func close() -> Bool {
+        guard fd >= 0 else { return false }
         var ok = true
         if dataBytes % 2 == 1 { var z: UInt8 = 0; ok = writeAll(&z, count: 1) }
         ok = patch() && ok
         ok = Darwin.close(fd) == 0 && ok
+        fd = -1
         return ok
     }
 
@@ -1561,6 +1608,8 @@ final class Resampler {
     let interleaved: UnsafeMutablePointer<Float>
     var haveInput = false
 
+    /// The only failure exit comes before anything deinit frees is acquired (Swift skips deinit for
+    /// a half-built instance); keep every fallible step above the allocation.
     init?(from inRate: Double, to outRate: Double, channels k: Int, chunk: Int) {
         self.k = k
         let outCap = Int((Double(chunk) * outRate / inRate).rounded(.up)) + 1024
@@ -1658,16 +1707,37 @@ func cmdRecord(_ a: Args) {
     } else {
         resampler = nil
     }
+    trapSignals()   // from here on, Ctrl-C ends through the result or fail()'s cleanups
+    // A new file is created before the capture starts, so a bad --out never opens the device, and
+    // fail() removes it if the capture can't start. An existing file under --force is truncated only
+    // once the capture runs, so a recording that never starts can't cost the old one.
+    let replacing = a.flags.contains("force") && FileManager.default.fileExists(atPath: path)
+    if replacing && access(path, W_OK) != 0 {
+        fail(ExitCode.failed, "can't create \(path): \(String(cString: strerror(errno)))", device: dev)
+    }
+    func makeWriter() -> WavWriter {
+        do { return try WavWriter(path: path, channels: k, rate: Int(outRate), float: float, overwrite: replacing) } catch {
+            fail(ExitCode.failed, "can't create \(path): \(error.localizedDescription)", device: dev)
+        }
+    }
+    var early: WavWriter? = nil
+    if !replacing {
+        let w = makeWriter()
+        failCleanups.append { _ = w.close(); unlink(path) }
+        early = w
+    }
     narrate("Recording \(dev.name) channel" + (k == 1 ? " " : "s ") + chans.map(String.init).joined(separator: ",") + " -> \(path) "
             + (fixed.map { "for \(secs($0)) s" } ?? "until \(secs(untilSilence!)) s below \(JSON.number(threshold)) dBFS (max \(secs(maxSeconds)) s)")
             + "; Ctrl-C stops and keeps the file")
-    // Capture first, file second: a capture that can't start (permission, device) leaves no empty file.
-    // Frames wait in the 10 s ring meanwhile.
     let cap = startCapture(dev, chans)
+    failCleanups.removeAll()   // capturing: from now on the file is kept and the result names it
     let writer: WavWriter
-    do { writer = try WavWriter(path: path, channels: k, rate: Int(outRate), float: float, overwrite: a.flags.contains("force")) } catch {
-        cap.session.stop()
-        fail(ExitCode.failed, "can't create \(path): \(error.localizedDescription)", device: dev)
+    if let w = early {
+        writer = w
+    } else {
+        failCleanups.append { cap.session.stop() }
+        writer = makeWriter()   // frames wait in the 10 s ring meanwhile
+        failCleanups.removeAll()
     }
     let chunk = 4096
     let buf = UnsafeMutablePointer<Float>.allocate(capacity: chunk * k)
@@ -2287,7 +2357,7 @@ let helpTexts: [String: String] = [
       --rate <Hz>                Resample to this rate, 8000..384000 (AVAudioConverter)
       --float                    32-bit float instead of 24-bit PCM
       -o, --out <file.wav>       Output path (default ./record-YYYYMMDD-HHMMSS.wav)
-      --force                    Overwrite --out if it exists (otherwise exit 3)
+      --force                    Overwrite --out if it exists (otherwise exit 3), once recording starts
       -j, --json                 {"success":true,"file":"/abs/rec.wav","from":Stub,"channels":[1],
                                   "rate":48000,"seconds":2,"peak_dbfs":-12.31,"rms_dbfs":-30.05,
                                   "clipped":false,"format":"s24","stopped":"seconds",
