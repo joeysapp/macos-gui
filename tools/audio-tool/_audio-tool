@@ -1,0 +1,182 @@
+#compdef audio-tool audio
+
+# Zsh completion for audio-tool (alias: audio).
+# Device targets are read live from `audio-tool list -j`; aliases from the alias file.
+
+_audio-tool_aliases() {
+    local -a names
+    local file=${HOME}/.config/macos-gui/audio_aliases.json line
+    [[ -r $file ]] || return 1
+    while IFS= read -r line; do
+        [[ $line =~ '"([^"]+)"[[:space:]]*:[[:space:]]*"([^"]*)"' ]] && names+=("${match[1]}:-> ${match[2]//:/\\:}")
+    done < $file
+    _describe -t aliases 'alias' names
+}
+
+# $1: in | out | empty - offer only devices with inputs / outputs.
+_audio-tool_targets() {
+    local want=$1
+    local tool=${commands[audio-tool]:-${commands[audio]}}
+    local -a devices objs
+    local json o idx name transport ins outs sep='},{'
+    if [[ -n $tool ]]; then
+        json=$("$tool" list -j 2>/dev/null)
+        objs=(${(ps:$sep:)json})
+        for o in $objs; do
+            [[ $o =~ '"index":([0-9]+)' ]] || continue
+            idx=${match[1]}
+            [[ $o =~ '"name":"(([^"\\]|\\.)*)"' ]] && name=${match[1]}
+            [[ $o =~ '"transport":"([^"]*)"' ]] && transport=${match[1]}
+            [[ $o =~ '"inputs":([0-9]+)' ]] && ins=${match[1]}
+            [[ $o =~ '"outputs":([0-9]+)' ]] && outs=${match[1]}
+            [[ $want == in && $ins == 0 ]] && continue
+            [[ $want == out && $outs == 0 ]] && continue
+            devices+=("${name//:/\\:}:#${idx} ${transport}, in ${ins}, out ${outs}")
+        done
+    fi
+    _audio-tool_aliases
+    if (( $#devices )); then
+        _describe -t devices 'audio device (name)' devices
+    else
+        _message 'target: index, alias, uid or name substring'
+    fi
+}
+
+# Actions take no arguments: _arguments puts compadd options ahead of an action's own words.
+_audio-tool_inputs() { _audio-tool_targets in }
+_audio-tool_outputs() { _audio-tool_targets out }
+
+# default <role> <target>: input devices for the input role, output devices otherwise.
+_audio-tool_default_target() {
+    if [[ $words[2] == input ]]; then _audio-tool_inputs; else _audio-tool_outputs; fi
+}
+
+# volume/mute <target>: the side --input picks.
+_audio-tool_scoped_target() {
+    if (( ${words[(I)--input]} )); then _audio-tool_inputs; else _audio-tool_outputs; fi
+}
+
+_audio-tool() {
+    local curcontext="$curcontext" state line ret=1
+    typeset -A opt_args
+
+    local -a subcmds   # not 'commands': that would shadow zsh's $commands hash in the helpers
+    subcmds=(
+        'list:Every audio device with stable 1-based indices'
+        'status:Default input, output and system output, with volume and mute'
+        'default:Show or set the default input, output or system output'
+        'volume:Print or set a device volume (0-100)'
+        'mute:Print or set a device mute (on, off, toggle)'
+        'play:Play a sound file on one device, blocking until done'
+        'record:Record input channels to a WAV'
+        'level:Peak and RMS dBFS per input channel'
+        'watch:One line per device added/removed and default change'
+        'alias:Manage device aliases (list, set, rm)'
+        'help:Help for a command'
+    )
+
+    local -a global_opts timeout_opt channel_spec
+    global_opts=(
+        '(-j --json)'{-j,--json}'[JSON on stdout]'
+        '(-v --verbose)'{-v,--verbose}'[CoreAudio calls, status codes and timings on stderr]'
+        '(-h --help)'{-h,--help}'[Show help]'
+    )
+    timeout_opt=('(-t --timeout)'{-t,--timeout}'[Read-back limit in seconds (default 5)]:seconds:')
+    channel_spec='channels (1, 1,2, 3-4, L, R, LR):(1 2 1,2 3 4 3,4 1-4 L R LR)'
+
+    _arguments -C \
+        $global_opts \
+        '(-V --version)'{-V,--version}'[Show version]' \
+        '1: :->command' \
+        '*:: :->args' && ret=0
+
+    case $state in
+        command)
+            _describe -t commands 'audio-tool command' subcmds && ret=0
+            ;;
+        args)
+            case $words[1] in
+                list|status|watch)
+                    _arguments $global_opts && ret=0
+                    ;;
+                default)
+                    _arguments $global_opts $timeout_opt \
+                        '1:role:((input\:"Default input device" output\:"Default output device" system\:"Device for alerts and sound effects"))' \
+                        '2::target:_audio-tool_default_target' && ret=0
+                    ;;
+                volume)
+                    _arguments $global_opts $timeout_opt \
+                        '--input[The input volume instead of the output]' \
+                        '1:target:_audio-tool_scoped_target' \
+                        '2::volume (0-100):(0 10 25 50 75 100)' && ret=0
+                    ;;
+                mute)
+                    _arguments $global_opts $timeout_opt \
+                        '--input[The input mute instead of the output]' \
+                        '1:target:_audio-tool_scoped_target' \
+                        '2::state:((on\:"Mute" off\:"Unmute" toggle\:"Flip the current state"))' && ret=0
+                    ;;
+                play)
+                    _arguments $global_opts \
+                        '--to[Output device (default: the default output)]:target:_audio-tool_outputs' \
+                        '(-c --channels)'{-c,--channels}"[Output channels]:$channel_spec" \
+                        '--gain[Gain in dB, -120..24 (default 0)]:dB:' \
+                        '1:audio file:_files -g "*.(#i)(wav|wave|aif|aiff|aifc|caf|m4a|mp3|mp4|aac|flac)(-.)"' && ret=0
+                    ;;
+                record)
+                    _arguments $global_opts \
+                        '--from[Input device]:target:_audio-tool_inputs' \
+                        '(-c --channels)'{-c,--channels}"[Input channels (default 1)]:$channel_spec" \
+                        '(-s --seconds --until-silence --max --threshold)'{-s,--seconds}'[Record exactly this long]:seconds:' \
+                        '(-s --seconds)--until-silence[Stop after this long below --threshold, once sound was heard]:seconds:' \
+                        '(-s --seconds)--max[Cap for --until-silence (default 60)]:seconds:' \
+                        '(-s --seconds)--threshold[Silence level in dBFS (default -45)]:dBFS:(-60 -50 -45 -40 -30)' \
+                        '--rate[Resample to this rate]:Hz:(16000 22050 24000 44100 48000 96000)' \
+                        '--float[32-bit float instead of 24-bit PCM]' \
+                        '(-o --out)'{-o,--out}'[Output WAV (default ./record-YYYYMMDD-HHMMSS.wav)]:wav file:_files -g "*.(#i)wav(-.)"' \
+                        '--force[Overwrite --out if it exists]' && ret=0
+                    ;;
+                level)
+                    _arguments $global_opts \
+                        '--from[Input device]:target:_audio-tool_inputs' \
+                        '(-c --channels)'{-c,--channels}"[Input channels (default: all)]:$channel_spec" \
+                        '(-s --seconds)'{-s,--seconds}'[Span in seconds (default 2); with --watch, stop after it]:seconds:' \
+                        '--watch[One line per 100 ms until Ctrl-C]' && ret=0
+                    ;;
+                alias|aliases)
+                    _arguments -C $global_opts '1:action:->alias_action' '*:: :->alias_args' && ret=0
+                    case $state in
+                        alias_action)
+                            local -a actions
+                            actions=(
+                                'list:Aliases and the device each resolves to'
+                                'set:Point an alias at a device: set <alias> <target>'
+                                'rm:Remove an alias: rm <alias>'
+                            )
+                            _describe -t actions 'alias action' actions && ret=0
+                            ;;
+                        alias_args)
+                            case $words[1] in
+                                set)
+                                    _arguments $global_opts '1:alias name:' '2:target:_audio-tool_targets' && ret=0
+                                    ;;
+                                rm|remove)
+                                    _arguments $global_opts '1:alias:_audio-tool_aliases' && ret=0
+                                    ;;
+                                list|ls)
+                                    _arguments $global_opts && ret=0
+                                    ;;
+                            esac
+                            ;;
+                    esac
+                    ;;
+                help)
+                    _describe -t commands 'command' subcmds && ret=0
+                    ;;
+            esac
+            ;;
+    esac
+    return ret
+}
+
+_audio-tool "$@"

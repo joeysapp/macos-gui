@@ -8,3 +8,4 @@ automation/templates
 # Binaries
 tools/background_set/background_set
 tools/bluetooth-tool/bluetooth-tool
+tools/audio-tool/audio-tool

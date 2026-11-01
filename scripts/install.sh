@@ -82,6 +82,9 @@ compile_tools() {
     local bt_src="$REPO_DIR/tools/bluetooth-tool/bluetooth-tool.swift"
     local bt_bin="$REPO_DIR/tools/bluetooth-tool/bluetooth-tool"
     local bt_plist="$REPO_DIR/tools/bluetooth-tool/Info.plist"
+    local au_src="$REPO_DIR/tools/audio-tool/audio-tool.swift"
+    local au_bin="$REPO_DIR/tools/audio-tool/audio-tool"
+    local au_plist="$REPO_DIR/tools/audio-tool/Info.plist"
 
     # `if` blocks, not `(( ! DRY_RUN )) && ...`: under `set -e` a false `&&` as a function's
     # last status aborts the script in --dry-run.
@@ -100,6 +103,14 @@ compile_tools() {
             if (( ! DRY_RUN )); then
                 swiftc -O "$bt_src" -o "$bt_bin" \
                     -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$bt_plist"
+            fi
+        fi
+        # Info.plist is embedded (NSMicrophoneUsageDescription) so the binary can get its own TCC prompt.
+        if [[ -f "$au_src" ]] && [[ ! -x "$au_bin" || "$au_src" -nt "$au_bin" || "$au_plist" -nt "$au_bin" ]]; then
+            print "🔨 Compiling native audio-tool (embedding Info.plist)..."
+            if (( ! DRY_RUN )); then
+                swiftc -O "$au_src" -o "$au_bin" \
+                    -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$au_plist"
             fi
         fi
     else
@@ -143,6 +154,8 @@ tools=(
     "$REPO_DIR/tools/airplay-tool/airplay-tool:airplay_connect"
     "$REPO_DIR/tools/bluetooth-tool/bluetooth-tool:bluetooth-tool"
     "$REPO_DIR/tools/bluetooth-tool/bluetooth-tool:bluetooth"
+    "$REPO_DIR/tools/audio-tool/audio-tool:audio-tool"
+    "$REPO_DIR/tools/audio-tool/audio-tool:audio"
     "$REPO_DIR/clipboard-network:clipboard-network"
 )
 
@@ -157,12 +170,16 @@ completions=(
     "$REPO_DIR/tools/airplay-tool/_airplay-tool:_airplay_connect"
     "$REPO_DIR/tools/bluetooth-tool/_bluetooth-tool:_bluetooth-tool"
     "$REPO_DIR/tools/bluetooth-tool/_bluetooth-tool:_bluetooth"
+    "$REPO_DIR/tools/audio-tool/_audio-tool:_audio-tool"
+    "$REPO_DIR/tools/audio-tool/_audio-tool:_audio"
     "$REPO_DIR/_clipboard-network:_clipboard-network"
 )
 
 # Processes running any of the tools right now, as "pid command", one per line.
 # Matched on the tool's own name at the end of a path or command word, so
-# bluetoothd and AirPlayXPCHelper aren't mistaken for bluetooth and airplay.
+# bluetoothd and AirPlayXPCHelper aren't mistaken for bluetooth and airplay, and
+# only as the command itself or the script a shell/Python/osascript runs: anywhere in
+# the line, a short name like `audio` matched arguments (".../audio file").
 tools_in_use() {
     local -a names
     local entry
@@ -170,8 +187,9 @@ tools_in_use() {
         names+=("${entry##*:}" "${${entry%%:*}:t}")
     done
     local -a uniq=(${(u)names})
-    local pattern="(^|/)(${(j:|:)uniq})( |\$)"
-    ps -axo pid=,command= | awk -v me=$$ '$1 != me' | grep -E "$pattern" | grep -v -E "grep -E|scripts/install.sh" || true
+    local interp='([^ ]*/)?(sh|bash|zsh|dash|[Pp]ython[0-9.]*|osascript)( +-[^ ]+)* +'
+    local pattern="^ *[0-9]+ (${interp})?([^ ]*/)?(${(j:|:)uniq})( |\$)"
+    ps -axo pid=,command= | awk -v me=$$ '$1 != me' | grep -E "$pattern" | grep -v -E "scripts/install.sh" || true
 }
 
 if (( UNINSTALL )); then

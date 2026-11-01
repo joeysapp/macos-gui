@@ -48,6 +48,17 @@ Native Swift Bluetooth CLI on IOBluetooth. Full reference: [`tools/bluetooth-too
 - **JSON**: `-j` on every command, a fixed contract (consumed by Topic). Exit codes: 0 ok, 1 failed, 2 usage, 3 refused, 4 timed out / unconfirmed.
 - **Permission**: embeds an Info.plist with `NSBluetoothAlwaysUsageDescription`; a parent app (e.g. TopicGet.app) needs the key too.
 
+### 6. `audio-tool` (alias: `audio`)
+Native Swift audio CLI on CoreAudio. Full reference: [`tools/audio-tool/README.md`](tools/audio-tool/README.md).
+- **Devices**: `list` shows every device (USB interfaces too, which `say -a '?'` doesn't) with its uid, transport, channel counts and names, rate and defaults; target by index, alias, uid or name substring.
+- **Defaults, volume, mute**: `status`, `default input|output|system [target]`, `volume <target> [0-100]`, `mute <target> [on|off|toggle]` (`--input` for the input side) as read-back transactions; a device without the control is exit 3, never a fake success.
+- **Play anywhere**: `play file --to scarlett --channels 1` resamples to the device's rate and plays through a raw IOProc on that device, without touching the defaults; blocks until the sound has left it.
+- **Record & meter**: `record --from scarlett -c 3,4 -s 10` or `--until-silence 1.5` writes a WAV (24-bit or `--float`, `--rate`) that stays valid even if killed; `level --from scarlett [--watch]` prints peak/RMS dBFS per channel.
+- **Events**: `watch` (one line per device added/removed and default change, JSON Lines with `-j`).
+- **Aliases**: `alias set scarlett "Scarlett 2i2"` stores the device uid in `~/.config/macos-gui/audio_aliases.json`.
+- **JSON**: `-j` on every command, a fixed contract (consumed by Topic). Exit codes: 0 ok, 1 failed, 2 usage/ambiguous, 3 refused, 4 timed out / unconfirmed; play/record/level cut short exit 128+signal.
+- **Permission**: record/level need the Microphone grant of the app that runs them (terminal, tmux, TopicGet.app); the binary embeds `NSMicrophoneUsageDescription`.
+
 ---
 
 ## Installation
@@ -107,4 +118,14 @@ bluetooth-tool wait "MAGIC KEEB" connected -t 30   # Block until it connects (ex
 bluetooth-tool power off                   # Refuses while a BT keyboard/mouse/trackpad is connected
 bluetooth-tool watch -j                    # JSON Lines per connect/disconnect
 bluetooth-tool logs --last 30m --grep disconnect   # Unified log (bluetoothd)
+
+# Audio
+audio-tool list -j                         # Every device (uid, transport, channels, rate, defaults)
+audio-tool status                          # Default input/output/system with volume and mute
+audio-tool default output speakers         # Read-back set of the default output
+audio-tool volume speakers 30              # Read-back volume (exit 3 if the device has no control)
+audio-tool play ding.wav --to scarlett -c 1          # One device and channel, defaults untouched
+audio-tool record --from scarlett -c 1 --until-silence 1.5 -o phrase.wav   # Record until quiet
+audio-tool level --from scarlett --watch   # Peak/RMS dBFS per input channel every 100 ms
+audio-tool watch -j                        # JSON Lines per device added/removed and default change
 ```
