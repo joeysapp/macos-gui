@@ -1,16 +1,38 @@
-#compdef background_set
+#compdef background-tool background_set background-set
 
-_background_set() {
-    local -a commands modes
+_background_tool_displays() {
+    local -a display_list
+    display_list=('all:All connected displays')
+    local displays_json
+    displays_json=$(background-tool list -j 2>/dev/null)
+    if [[ -n "$displays_json" ]]; then
+        local idxs names uuids
+        idxs=($(echo "$displays_json" | awk -F'"' '/"index" *:/{print $4}' 2>/dev/null || true))
+        names=($(echo "$displays_json" | awk -F'"' '/"name" *:/{print $4}' 2>/dev/null || true))
+        uuids=($(echo "$displays_json" | awk -F'"' '/"uuid" *:/{print $4}' 2>/dev/null || true))
+        for i in {1..${#idxs[@]}}; do
+            display_list+=("${idxs[$i]}:${names[$i]}")
+            display_list+=("${uuids[$i]}:${names[$i]} (UUID)")
+        done
+    else
+        display_list+=('0:Primary display' '1:Secondary display')
+    fi
+    _describe -t displays 'display' display_list
+}
+
+_background_tool() {
+    local -a commands modes schedules
     commands=(
         'set:Set desktop wallpaper to an image file'
+        'dynamic:Ingest frames and build dynamic HEIC wallpaper (solar, time, appearance)'
         'color:Set solid background color'
         'random:Select a random image from a directory'
         'rotate:Rotate wallpapers periodically from a directory'
         'spaces:Assign distinct wallpapers across connected displays'
-        'list:List connected displays, IDs, resolution, and current wallpaper'
+        'list:List connected displays, IDs, UUIDs, resolution, and current wallpaper'
         'status:Alias for list'
         'get:Get the current wallpaper path for display(s)'
+        'help:Show help'
     )
 
     modes=(
@@ -20,14 +42,23 @@ _background_set() {
         'center:Center image at 1:1 original pixel size'
     )
 
+    schedules=(
+        'solar:Rotate frames based on sun altitude and azimuth'
+        'time:Switch frames at 24-hour clock intervals'
+        'appearance:Switch frames based on macOS Light / Dark mode'
+    )
+
     local -a common_opts
     common_opts=(
-        '(-d --display)'{-d,--display}'[Target display (index, ID, or name)]:display:->displays'
+        '(-d --display)'{-d,--display}'[Target display (UUID, index, ID, or name)]:display:_background_tool_displays'
         '(-m --mode)'{-m,--mode}'[Scaling mode (fill, fit, stretch, center)]:mode:->modes'
         '(-c --color)'{-c,--color}'[Background matte/fill color (#hex or name)]:color:'
-        '(-n --dry-run)'{-n,--dry-run}'[Print actions without changing anything]'
+        '(-n --dry-run)'{-n,--dry-run}'[Simulate actions without changing system state]'
+        '(-j --json)'{-j,--json}'[Output machine-readable JSON format]'
+        '(-v --verbose)'{-v,--verbose}'[Emit debug diagnostics to stderr]'
+        '(-q --quiet)'{-q,--quiet}'[Suppress non-essential output]'
         '(-h --help)'{-h,--help}'[Show help]'
-        '(-v --version)'{-v,--version}'[Show version]'
+        '(-V --version)'{-V,--version}'[Show version]'
     )
 
     _arguments -C \
@@ -36,16 +67,10 @@ _background_set() {
         '*:: :->args' && return 0
 
     case "$state" in
-        displays)
-            local -a display_list
-            display_list=('all:All connected displays' '0:Primary display' '1:Secondary display')
-            _describe -t displays 'display' display_list
-            ;;
         modes)
             _describe -t modes 'wallpaper mode' modes
             ;;
         command_or_file)
-            local -a image_files
             _describe -t commands 'subcommand' commands
             _files -g '*.([jJ][pP][gG]|[jJ][pP][eE][gG]|[pP][nN][gG]|[hH][eE][iI][cC]|[wW][eE][bB][pP]|[tT][iI][fF][fF])'
             ;;
@@ -55,6 +80,17 @@ _background_set() {
                     _arguments \
                         $common_opts \
                         '1:image file:_files -g "*.([jJ][pP][gG]|[jJ][pP][eE][gG]|[pP][nN][gG]|[hH][eE][iI][cC]|[wW][eE][bB][pP]|[tT][iI][fF][fF])"'
+                    ;;
+                dynamic)
+                    _arguments \
+                        $common_opts \
+                        '(-s --schedule)'{-s,--schedule}'[Dynamic schedule type]:schedule:->schedules' \
+                        '(-o --out)'{-o,--out}'[Output .heic file destination]:output file:_files' \
+                        '--apply[Apply generated wallpaper to display(s)]' \
+                        '--light[Index or filename for light appearance]:frame:' \
+                        '--dark[Index or filename for dark appearance]:frame:' \
+                        '1:frame directory or images:_files' \
+                        '*:additional images:_files'
                     ;;
                 color)
                     _arguments \
@@ -87,6 +123,12 @@ _background_set() {
             esac
             ;;
     esac
+
+    case "$state" in
+        schedules)
+            _describe -t schedules 'dynamic schedule' schedules
+            ;;
+    esac
 }
 
-_background_set "$@"
+_background_tool "$@"

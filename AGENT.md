@@ -111,11 +111,24 @@ Native Swift display arrangement utility via Quartz CoreGraphics.
 ### 5. `clipboard-tool` (source: `clipboard-network`)
 Zero-quote length-prefixed clipboard sharing bridge between macOS (`pbpaste`) and Windows SSH environments.
 
+### 6. `background-tool` (aliases: `background_set`, `background-set`)
+Native Swift macOS wallpaper management and dynamic HEIC generator.
+- **Dynamic HEIC Generation (`dynamic`)**: Ingests frame directory or file sequence and outputs compliant dynamic wallpapers with Apple XMP metadata (`apple_desktop:solar`, `apple_desktop:h24`, `apple_desktop:apr`).
+- **Display UUID Targeting**: Targets displays by UUID, prefix, 0-based index, display ID, or name substring.
+- **Transactions**: Read-back verification confirming applied wallpaper with window server within 2-second timeout (exit 4 on unconfirmed).
+- **Regression Suite**: `tools/background-tool/check.sh`.
+
+### 7. `hot-corner-tool`
+Native Swift CLI for triggering macOS system workspace actions.
+- **Commands**: `desktop` (Show Desktop), `mission-control` (Mission Control), `app-windows` (App Exposé), and `notification-center` (Notification Center sidebar).
+- **One-Shot Actions**: Direct stateless execution via `CoreDockSendNotification` and system ControlCenter bridge.
+- **Regression Suite**: `tools/hot-corner-tool/check.sh`.
+
 ---
 
 ## 6. Installation & Safety Rules
 
-- The 5 standardized suite tools (`airplay-tool`, `audio-tool`, `bluetooth-tool`, `display-tool`, `clipboard-tool`) and their completions are installed via [`scripts/install.sh`](file:///Users/zooey/etc/git/macos-gui/scripts/install.sh).
+- The 7 standardized suite tools (`airplay-tool`, `audio-tool`, `background-tool`, `bluetooth-tool`, `display-tool`, `hot-corner-tool`, `clipboard-tool`) and their completions are installed via [`scripts/install.sh`](file:///Users/zooey/etc/git/macos-gui/scripts/install.sh).
 - **Clean Installation**: `install.sh` automatically cleans up obsolete legacy definitions (`airplay`, `airplay_connect`, `audio`, `bluetooth`, `background_set`, `display_ctl`, `clipboard-network`).
 - **In-Use Guard**: `install.sh` refuses (exit 3) if any tool in the suite is actively running (e.g. background watch daemon or audio stream) to prevent in-place binary overwrite corruption during Swift compilation. Use `--force` to bypass when intended.
 - **Dry Run**: `scripts/install.sh --dry-run` previews all symlink, cleanup, and compilation actions without modifying disk.

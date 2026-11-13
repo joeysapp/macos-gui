@@ -7,5 +7,9 @@ automation/templates
 
 # Binaries
 tools/background_set/background_set
+tools/background-tool/background-tool
+tools/background-tool/background_set
+tools/background-tool/background-set
+tools/hot-corner-tool/hot-corner-tool
 tools/bluetooth-tool/bluetooth-tool
 tools/audio-tool/audio-tool

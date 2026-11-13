@@ -75,8 +75,10 @@ done
 
 # Compile Swift tools if needed
 compile_tools() {
-    local bg_src="$REPO_DIR/tools/background_set/background_set.swift"
-    local bg_bin="$REPO_DIR/tools/background_set/background_set"
+    local bg_src="$REPO_DIR/tools/background-tool/background-tool.swift"
+    local bg_bin="$REPO_DIR/tools/background-tool/background-tool"
+    local hc_src="$REPO_DIR/tools/hot-corner-tool/hot-corner-tool.swift"
+    local hc_bin="$REPO_DIR/tools/hot-corner-tool/hot-corner-tool"
     local disp_src="$REPO_DIR/tools/display_ctl/display_ctl.swift"
     local disp_bin="$REPO_DIR/tools/display_ctl/display_ctl"
     local bt_src="$REPO_DIR/tools/bluetooth-tool/bluetooth-tool.swift"
@@ -90,18 +92,22 @@ compile_tools() {
     # last status aborts the script in --dry-run.
     if command -v swiftc >/dev/null 2>&1; then
         if [[ -f "$bg_src" ]] && [[ ! -x "$bg_bin" || "$bg_src" -nt "$bg_bin" ]]; then
-            print "🔨 Compiling native background_set..."
-            if (( ! DRY_RUN )); then swiftc -O "$bg_src" -o "$bg_bin"; fi
+            print "🔨 Compiling native background-tool..."
+            if (( ! DRY_RUN )); then swiftc -module-cache-path /tmp/mcache -O "$bg_src" -o "$bg_bin"; fi
+        fi
+        if [[ -f "$hc_src" ]] && [[ ! -x "$hc_bin" || "$hc_src" -nt "$hc_bin" ]]; then
+            print "🔨 Compiling native hot-corner-tool..."
+            if (( ! DRY_RUN )); then swiftc -module-cache-path /tmp/mcache -O "$hc_src" -o "$hc_bin"; fi
         fi
         if [[ -f "$disp_src" ]] && [[ ! -x "$disp_bin" || "$disp_src" -nt "$disp_bin" ]]; then
             print "🔨 Compiling native display_ctl..."
-            if (( ! DRY_RUN )); then swiftc -O "$disp_src" -o "$disp_bin"; fi
+            if (( ! DRY_RUN )); then swiftc -module-cache-path /tmp/mcache -O "$disp_src" -o "$disp_bin"; fi
         fi
         # Info.plist is embedded (NSBluetoothAlwaysUsageDescription) so the binary can get its own TCC prompt.
         if [[ -f "$bt_src" ]] && [[ ! -x "$bt_bin" || "$bt_src" -nt "$bt_bin" || "$bt_plist" -nt "$bt_bin" ]]; then
             print "🔨 Compiling native bluetooth-tool (embedding Info.plist)..."
             if (( ! DRY_RUN )); then
-                swiftc -O "$bt_src" -o "$bt_bin" \
+                swiftc -module-cache-path /tmp/mcache -O "$bt_src" -o "$bt_bin" \
                     -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$bt_plist"
             fi
         fi
@@ -109,7 +115,7 @@ compile_tools() {
         if [[ -f "$au_src" ]] && [[ ! -x "$au_bin" || "$au_src" -nt "$au_bin" || "$au_plist" -nt "$au_bin" ]]; then
             print "🔨 Compiling native audio-tool (embedding Info.plist)..."
             if (( ! DRY_RUN )); then
-                swiftc -O "$au_src" -o "$au_bin" \
+                swiftc -module-cache-path /tmp/mcache -O "$au_src" -o "$au_bin" \
                     -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$au_plist"
             fi
         fi
@@ -148,8 +154,10 @@ typeset -a tools
 tools=(
     "$REPO_DIR/tools/airplay-tool/airplay-tool:airplay-tool"
     "$REPO_DIR/tools/audio-tool/audio-tool:audio-tool"
+    "$REPO_DIR/tools/background-tool/background-tool:background-tool"
     "$REPO_DIR/tools/bluetooth-tool/bluetooth-tool:bluetooth-tool"
     "$REPO_DIR/tools/display_ctl/display_ctl:display-tool"
+    "$REPO_DIR/tools/hot-corner-tool/hot-corner-tool:hot-corner-tool"
     "$REPO_DIR/clipboard-network:clipboard-tool"
 )
 
@@ -158,8 +166,10 @@ typeset -a completions
 completions=(
     "$REPO_DIR/tools/airplay-tool/_airplay-tool:_airplay-tool"
     "$REPO_DIR/tools/audio-tool/_audio-tool:_audio-tool"
+    "$REPO_DIR/tools/background-tool/_background-tool:_background-tool"
     "$REPO_DIR/tools/bluetooth-tool/_bluetooth-tool:_bluetooth-tool"
     "$REPO_DIR/tools/display_ctl/_display_ctl:_display-tool"
+    "$REPO_DIR/tools/hot-corner-tool/_hot-corner-tool:_hot-corner-tool"
     "$REPO_DIR/_clipboard-network:_clipboard-tool"
 )
 

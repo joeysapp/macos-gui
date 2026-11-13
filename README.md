@@ -51,6 +51,19 @@ Native Swift display arrangement and resolution utility built directly with Quar
 ### 5. `clipboard-tool` (source: `clipboard-network`)
 Zero-quote length-prefixed clipboard sharing bridge between macOS (`pbpaste`) and Windows SSH environments.
 
+### 6. `background-tool` (aliases: `background_set`, `background-set`)
+Native Swift macOS wallpaper management and dynamic HEIC generator. Full reference: [`tools/background-tool/README.md`](tools/background-tool/README.md).
+- **Dynamic HEIC Wallpapers (`dynamic`)**: Ingests frames and creates compliant Apple dynamic HEIC files (`solar`, `time`, or `appearance`) with embedded XMP plists.
+- **Display UUID Targeting**: Target displays by persistent hardware UUID (e.g. `37D8832A-2D66-02CA-B9F7-8F30A301B230`), prefix, 0-based index, or name.
+- **Read-Back Verification**: Performs active read-back transactions verifying the applied wallpaper against macOS window server preferences before reporting success.
+- **Management Modes**: Solid colors (`color`), random selection (`random`), periodic rotation (`rotate`), and sequential multi-display layouts (`spaces`).
+
+### 7. `hot-corner-tool`
+Native Swift CLI for triggering macOS system workspace actions. Full reference: [`tools/hot-corner-tool/README.md`](tools/hot-corner-tool/README.md).
+- **One-Shot Actions**: Stateless, instantaneous triggers for `desktop`, `mission-control`, `app-windows`, and `notification-center`.
+- **System Integration**: Built on private `CoreDockSendNotification` primitives and ControlCenter AppleScript bridge.
+- **JSON & Scripting**: Standardized exit codes and `-j` JSON payloads for scripting and automation.
+
 ---
 
 ## Installation
@@ -92,10 +105,17 @@ airplay-tool logs --last 2h -j             # Unified Log diagnostics
 airplay-tool logs --follow                 # Live stream AirPlay logs
 
 # Wallpapers
-background-set list -j                     # List display wallpaper states
-background-set ~/Wallpapers/art.png        # Set wallpaper across screens
-background-set color "#0d1117"             # Set solid matte background
-background-set rotate ~/Wallpapers 15m     # Rotate wallpapers
+background-tool list -j                    # List display states with UUIDs
+background-tool ~/Wallpapers/art.png       # Set wallpaper across screens
+background-tool color "#0d1117"            # Set solid matte background
+background-tool dynamic ~/Pictures/Solar/ --schedule solar --apply -d 0   # Ingest & apply dynamic HEIC
+background-tool rotate ~/Wallpapers 15m    # Rotate wallpapers
+
+# Hot Corners & Workspace Actions
+hot-corner-tool desktop                    # Toggle Show Desktop
+hot-corner-tool mission-control            # Toggle Mission Control overview
+hot-corner-tool app-windows                # Toggle Application Windows (App Exposé)
+hot-corner-tool notification-center        # Toggle Notification Center sidebar
 
 # Display Arrangement
 display-tool list -j                       # Inspect displays
