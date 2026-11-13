@@ -1,0 +1,36 @@
+#compdef hot-corner-tool
+
+_hot_corner_tool() {
+    local -a commands
+    commands=(
+        'desktop:Toggle Show Desktop (hide/show windows)'
+        'mission-control:Toggle Mission Control overview'
+        'app-windows:Toggle Application Windows (App Exposé)'
+        'notification-center:Toggle Notification Center sidebar'
+        'help:Show help for a command'
+    )
+
+    _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help]' \
+        '(-j --json)'{-j,--json}'[Output machine-readable JSON]' \
+        '(-v --verbose)'{-v,--verbose}'[Verbose debug diagnostics to stderr]' \
+        '(-q --quiet)'{-q,--quiet}'[Suppress normal output]' \
+        '(-V --version)'{-V,--version}'[Show version]' \
+        '1: :->command' \
+        '*:: :->args'
+
+    case $state in
+        command)
+            _describe -t commands 'hot-corner-tool command' commands
+            ;;
+        args)
+            case $words[1] in
+                help)
+                    _values 'command' 'desktop' 'mission-control' 'app-windows' 'notification-center'
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_hot_corner_tool "$@"
