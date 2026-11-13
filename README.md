@@ -9,14 +9,15 @@ Each utility follows the Unix philosophy—modular, independent single-purpose t
 ## Suite Components
 
 ### 1. `airplay-tool` (aliases: `airplay`, `airplay_connect`)
-High-performance macOS AirPlay Screen Mirroring CLI.
+High-performance macOS AirPlay Screen Mirroring CLI. Full reference: [`tools/airplay-tool/README.md`](tools/airplay-tool/README.md).
 - **Fast Concurrent Discovery**: Resolves mDNS TXT records in parallel via Bonjour (`_airplay._tcp`), cutting discovery time to ~1 second.
 - **Smart Toggle (`airplay-tool toggle`)**: Disconnects active sessions or dynamically reconnects to the last-used host with configurable network discovery wait (`--timeout 8`).
 - **Flexible Target Resolution**: Connect by 1-based index (`1`, `2`), friendly alias (`tv`), name substring (`LG`, `torus`), MAC address, or UUID.
 - **Friendly Aliases**: Persistent shorthand nicknames (`airplay-tool alias set tv "LG"`).
-- **Auto-Reconnect Watchdog (`airplay-tool watch "LG"`)**: Keeps flaky connections alive (e.g. LG OLED TVs).
-- **Diagnostics & Logs (`airplay-tool logs`)**: Queries macOS Unified Log for socket teardowns, timeout reasons, and connection metrics.
-- **JSON Output**: Full machine-readable `-j` / `--json` support across all subcommands.
+- **Auto-Reconnect Watchdog (`airplay-tool watch`)**: Keeps flaky connections alive (e.g. LG OLED TVs) with configurable polling intervals via `-i, --interval` (e.g. `60000ms`, `60s`, `1m`; default: `60000ms` / `60s`), auto-targeting active or last host if omitted.
+- **State Waiter (`airplay-tool wait <target> [state]`)**: Blocks until target is `connected`, `disconnected`, or `online` (`-t timeout`), exiting 0 on match or 4 on timeout.
+- **Diagnostics & Streaming (`airplay-tool logs`)**: Queries Unified Log for teardown reasons and connection metrics, or live streams events with `-f, --follow`.
+- **JSON Output**: Full machine-readable `-j` / `--json` support across all subcommands (and JSON Lines for `watch` and `logs --follow`). Exit codes: 0 ok, 1 failed, 2 usage, 3 refused, 4 unconfirmed/timed out.
 
 ### 2. `background-set` (alias: `background_set`)
 Native Swift wallpaper management tool using Cocoa/AppKit `NSWorkspace`.
@@ -91,11 +92,13 @@ autoload -Uz compinit && compinit
 # AirPlay
 airplay-tool list -j                       # List nearby devices in JSON
 airplay-tool toggle                        # Smart toggle: disconnect or reconnect last host
-airplay-tool start tv --mode extend        # Connect using friendly alias
+airplay-tool start tv --mode extend        # Connect using friendly alias (or: connect tv)
+airplay-tool wait tv connected             # Block until connected (exit 0 on success, 4 on timeout)
 airplay-tool status                        # Check active session & last host
-airplay-tool stop                          # Clean disconnect
-airplay-tool watch "LG"                    # Keepalive watchdog
+airplay-tool stop                          # Clean disconnect (or: disconnect)
+airplay-tool watch --interval 60000ms      # Keepalive watchdog every 60s
 airplay-tool logs --last 2h -j             # Unified Log diagnostics
+airplay-tool logs --follow                 # Live stream AirPlay logs
 
 # Wallpapers
 background-set list -j                     # List display wallpaper states
