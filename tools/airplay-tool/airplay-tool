@@ -370,11 +370,16 @@ def resolve_target(target_str, devices=None, verbose=False):
 def find_display_ctl():
     script_dir = Path(__file__).resolve().parent
     candidates = [
+        script_dir / "display-tool",
         script_dir / "display_ctl",
+        script_dir.parent / "display_ctl" / "display-tool",
         script_dir.parent / "display_ctl" / "display_ctl",
+        script_dir.parent.parent / "tools" / "display_ctl" / "display-tool",
         script_dir.parent.parent / "tools" / "display_ctl" / "display_ctl",
+        Path(os.path.expanduser("~/.local/bin/display-tool")),
+        Path(os.path.expanduser("~/.local/bin/display_ctl")),
+        Path("/usr/local/bin/display-tool"),
         Path("/usr/local/bin/display_ctl"),
-        Path(os.path.expanduser("~/.local/bin/display_ctl"))
     ]
     for c in candidates:
         if c.exists() and os.access(c, os.X_OK):
@@ -891,17 +896,21 @@ def is_target_connected(target_id, target_name):
     session = get_current_session_info(fast=False)
     if session:
         cur_id = session.get("device_id", "")
-        if cur_id and (cur_id == target_id or normalize_identifier(cur_id) == normalize_identifier(target_id)):
-            return True
-        if target_name and cur_id and target_name.lower() in cur_id.lower():
-            return True
+        if cur_id:
+            if cur_id == target_id or normalize_identifier(cur_id) == normalize_identifier(target_id):
+                return True
+            if target_name and target_name.lower() in cur_id.lower():
+                return True
 
     online_displays = get_online_displays_fast() or []
     for d in online_displays:
+        if "Built-in" in d.get("type", ""):
+            continue
         dname = d.get("name", "")
         if target_name and target_name.lower() in dname.lower():
             return True
-        if "AirPlay" in dname:
+        norm_t = normalize_identifier(target_id)
+        if norm_t and norm_t in normalize_identifier(dname):
             return True
     return False
 

@@ -1,4 +1,4 @@
-#compdef clipboard-network
+#compdef clipboard-tool clipboard-network
 
 _clipboard-network() {
     local -a commands

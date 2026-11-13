@@ -103,26 +103,22 @@ Native Swift CLI built on `CoreAudio`.
 - **Regression Suite**: `tools/audio-tool/check.sh` running 18 failure paths under AddressSanitizer.
 - **Permissions**: Embeds `Info.plist` with `NSMicrophoneUsageDescription`.
 
-### 4. `background_set` (alias: `background-set`)
-Native Swift wallpaper management via `NSWorkspace`.
-- **Display Targeting**: Target all displays or specific indices/names (`-d 0`, `-d "LG"`).
-- **Modes**: `fill`, `fit`, `stretch`, `center`, custom matte colors (`#hex`), and rotation daemon.
-
-### 5. `display_ctl`
+### 4. `display-tool` (source: `tools/display_ctl`)
 Native Swift display arrangement utility via Quartz CoreGraphics.
 - **Modes**: Instant query (<10ms), desktop `mirror`, `extend`, `toggle`.
 - **Resolution**: Query and set resolution and refresh rates.
 
-### 6. `clipboard-network`
+### 5. `clipboard-tool` (source: `clipboard-network`)
 Zero-quote length-prefixed clipboard sharing bridge between macOS (`pbpaste`) and Windows SSH environments.
 
 ---
 
 ## 6. Installation & Safety Rules
 
-- Tools are installed via [`scripts/install.sh`](file:///Users/zooey/etc/git/macos-gui/scripts/install.sh).
-- **In-Use Guard**: `install.sh` refuses (exit 3) if any tool in the suite is actively running (e.g. background watch daemon, wallpaper rotation, or audio stream) to prevent in-place binary overwrite corruption during Swift compilation. Use `--force` to bypass when intended.
-- **Dry Run**: `scripts/install.sh --dry-run` previews all symlink and compilation actions without modifying disk.
+- The 5 standardized suite tools (`airplay-tool`, `audio-tool`, `bluetooth-tool`, `display-tool`, `clipboard-tool`) and their completions are installed via [`scripts/install.sh`](file:///Users/zooey/etc/git/macos-gui/scripts/install.sh).
+- **Clean Installation**: `install.sh` automatically cleans up obsolete legacy definitions (`airplay`, `airplay_connect`, `audio`, `bluetooth`, `background_set`, `display_ctl`, `clipboard-network`).
+- **In-Use Guard**: `install.sh` refuses (exit 3) if any tool in the suite is actively running (e.g. background watch daemon or audio stream) to prevent in-place binary overwrite corruption during Swift compilation. Use `--force` to bypass when intended.
+- **Dry Run**: `scripts/install.sh --dry-run` previews all symlink, cleanup, and compilation actions without modifying disk.
 
 ---
 

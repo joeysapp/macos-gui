@@ -1,4 +1,4 @@
-#compdef display_ctl
+#compdef display-tool display_ctl
 
 _display_ctl() {
     local -a commands

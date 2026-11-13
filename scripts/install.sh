@@ -146,34 +146,62 @@ install_symlink() {
 # Tools to link: <source_path>:<dest_name>
 typeset -a tools
 tools=(
-    "$REPO_DIR/tools/background_set/background_set:background-set"
-    "$REPO_DIR/tools/background_set/background_set:background_set"
-    "$REPO_DIR/tools/display_ctl/display_ctl:display_ctl"
     "$REPO_DIR/tools/airplay-tool/airplay-tool:airplay-tool"
-    "$REPO_DIR/tools/airplay-tool/airplay-tool:airplay"
-    "$REPO_DIR/tools/airplay-tool/airplay-tool:airplay_connect"
-    "$REPO_DIR/tools/bluetooth-tool/bluetooth-tool:bluetooth-tool"
-    "$REPO_DIR/tools/bluetooth-tool/bluetooth-tool:bluetooth"
     "$REPO_DIR/tools/audio-tool/audio-tool:audio-tool"
-    "$REPO_DIR/tools/audio-tool/audio-tool:audio"
-    "$REPO_DIR/clipboard-network:clipboard-network"
+    "$REPO_DIR/tools/bluetooth-tool/bluetooth-tool:bluetooth-tool"
+    "$REPO_DIR/tools/display_ctl/display_ctl:display-tool"
+    "$REPO_DIR/clipboard-network:clipboard-tool"
 )
 
 # Completions to link: <source_path>:<dest_name>
 typeset -a completions
 completions=(
-    "$REPO_DIR/tools/background_set/_background_set:_background-set"
-    "$REPO_DIR/tools/background_set/_background_set:_background_set"
-    "$REPO_DIR/tools/display_ctl/_display_ctl:_display_ctl"
     "$REPO_DIR/tools/airplay-tool/_airplay-tool:_airplay-tool"
-    "$REPO_DIR/tools/airplay-tool/_airplay-tool:_airplay"
-    "$REPO_DIR/tools/airplay-tool/_airplay-tool:_airplay_connect"
-    "$REPO_DIR/tools/bluetooth-tool/_bluetooth-tool:_bluetooth-tool"
-    "$REPO_DIR/tools/bluetooth-tool/_bluetooth-tool:_bluetooth"
     "$REPO_DIR/tools/audio-tool/_audio-tool:_audio-tool"
-    "$REPO_DIR/tools/audio-tool/_audio-tool:_audio"
-    "$REPO_DIR/_clipboard-network:_clipboard-network"
+    "$REPO_DIR/tools/bluetooth-tool/_bluetooth-tool:_bluetooth-tool"
+    "$REPO_DIR/tools/display_ctl/_display_ctl:_display-tool"
+    "$REPO_DIR/_clipboard-network:_clipboard-tool"
 )
+
+# Obsolete legacy definitions to remove if present
+typeset -a legacy_tools
+legacy_tools=(
+    "$BIN_DIR/background-set"
+    "$BIN_DIR/background_set"
+    "$BIN_DIR/display_ctl"
+    "$BIN_DIR/airplay"
+    "$BIN_DIR/airplay_connect"
+    "$BIN_DIR/bluetooth"
+    "$BIN_DIR/audio"
+    "$BIN_DIR/clipboard-network"
+)
+
+typeset -a legacy_completions
+legacy_completions=(
+    "$COMP_DIR/_background-set"
+    "$COMP_DIR/_background_set"
+    "$COMP_DIR/_display_ctl"
+    "$COMP_DIR/_airplay"
+    "$COMP_DIR/_airplay_connect"
+    "$COMP_DIR/_bluetooth"
+    "$COMP_DIR/_audio"
+    "$COMP_DIR/_clipboard-network"
+)
+
+clean_legacy() {
+    local target="$1"
+    if [[ -L "$target" ]]; then
+        local dest="$(readlink "$target" 2>/dev/null || true)"
+        if [[ "$dest" == "$REPO_DIR"* ]]; then
+            if (( DRY_RUN )); then
+                print "  🧹 [dry-run] Remove legacy $target"
+            else
+                print "  🧹 Removed legacy $target"
+                rm -f "$target"
+            fi
+        fi
+    fi
+}
 
 # Processes running any of the tools right now, as "pid command", one per line.
 # Matched on the tool's own name at the end of a path or command word, so
@@ -212,6 +240,9 @@ else
 fi
 
 print "\nBinaries (to $BIN_DIR):"
+for item in "${legacy_tools[@]}"; do
+    clean_legacy "$item"
+done
 for entry in "${tools[@]}"; do
     src="${entry%%:*}"
     name="${entry##*:}"
@@ -221,6 +252,9 @@ for entry in "${tools[@]}"; do
 done
 
 print "\nCompletions (to $COMP_DIR):"
+for item in "${legacy_completions[@]}"; do
+    clean_legacy "$item"
+done
 for entry in "${completions[@]}"; do
     src="${entry%%:*}"
     name="${entry##*:}"

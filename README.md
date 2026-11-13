@@ -19,37 +19,7 @@ High-performance macOS AirPlay Screen Mirroring CLI. Full reference: [`tools/air
 - **Diagnostics & Streaming (`airplay-tool logs`)**: Queries Unified Log for teardown reasons and connection metrics, or live streams events with `-f, --follow`.
 - **JSON Output**: Full machine-readable `-j` / `--json` support across all subcommands (and JSON Lines for `watch` and `logs --follow`). Exit codes: 0 ok, 1 failed, 2 usage, 3 refused, 4 unconfirmed/timed out.
 
-### 2. `background-set` (alias: `background_set`)
-Native Swift wallpaper management tool using Cocoa/AppKit `NSWorkspace`.
-- **Display Targeting**: Target all connected displays (default) or individual screens (`-d 0`, `-d "LG"`).
-- **Scaling Modes**: `fill`, `fit`, `stretch`, `center`.
-- **Custom Matte & Solid Colors**: Supports `#hex` codes and named colors with letterboxing or pure solid backgrounds (`background-set color "#0d1117"`).
-- **Multi-Display & Spaces**: Distribute wallpapers across monitors (`spaces`).
-- **Random & Rotation**: Built-in background rotation daemon (`rotate ~/Wallpapers 15m`).
-- **JSON Output**: `background-set list -j` returns instant monitor metadata in 5ms.
-
-### 3. `display_ctl`
-Native Swift display arrangement and resolution utility built directly with Quartz CoreGraphics.
-- **Mirror / Extend**: Toggle between mirrored and extended desktop modes (`display_ctl mirror`, `display_ctl extend`, `display_ctl toggle`).
-- **Resolution Control**: Inspect and configure display modes, backing pixel dimensions, and refresh rates (`display_ctl resolution 1920x1080 60`).
-- **Instant Query**: Native C CoreGraphics calls executing in <10ms.
-- **JSON Output**: `display_ctl list -j` outputs clean display lists.
-
-### 4. `clipboard-network`
-Zero-quote length-prefixed clipboard sharing bridge between macOS (`pbpaste`) and Windows SSH environments.
-
-### 5. `bluetooth-tool` (alias: `bluetooth`)
-Native Swift Bluetooth CLI on IOBluetooth. Full reference: [`tools/bluetooth-tool/README.md`](tools/bluetooth-tool/README.md).
-- **Devices**: `list` / `status` with stable 1-based indices; target by index, alias, name substring or address.
-- **Read-back transactions**: `connect`, `disconnect`, `toggle`, `power on|off|toggle` act only when needed (`changed:false` otherwise) and report the state read back; no read-back in time = exit 4.
-- **Keyboard guard**: `power off` refuses (exit 3) while a Bluetooth keyboard, mouse or trackpad is connected, naming it, unless `--force`.
-- **Waiting & events**: `wait <target> connected|disconnected -t 30`, `watch` (one line per connect/disconnect, JSON Lines with `-j`).
-- **Logs**: `logs --last 2h --grep text` / `logs -f` over `bluetoothd` + `com.apple.bluetooth`.
-- **Aliases**: `alias set receiver dh590` stores the device address in `~/.config/macos-gui/bluetooth_aliases.json`.
-- **JSON**: `-j` on every command, a fixed contract (consumed by Topic). Exit codes: 0 ok, 1 failed, 2 usage, 3 refused, 4 timed out / unconfirmed.
-- **Permission**: embeds an Info.plist with `NSBluetoothAlwaysUsageDescription`; a parent app (e.g. TopicGet.app) needs the key too.
-
-### 6. `audio-tool` (alias: `audio`)
+### 2. `audio-tool` (alias: `audio`)
 Native Swift audio CLI on CoreAudio. Full reference: [`tools/audio-tool/README.md`](tools/audio-tool/README.md).
 - **Devices**: `list` shows every device (USB interfaces too, which `say -a '?'` doesn't) with its uid, transport, channel counts and names, rate and defaults; target by index, alias, uid or name substring.
 - **Defaults, volume, mute**: `status`, `default input|output|system [target]`, `volume <target> [0-100]`, `mute <target> [on|off|toggle]` (`--input` for the input side) as read-back transactions; a device without the control is exit 3, never a fake success.
@@ -57,8 +27,29 @@ Native Swift audio CLI on CoreAudio. Full reference: [`tools/audio-tool/README.m
 - **Record & meter**: `record --from scarlett -c 3,4 -s 10` or `--until-silence 1.5` writes a WAV (24-bit or `--float`, `--rate`) that stays valid even if killed; `level --from scarlett [--watch]` prints peak/RMS dBFS per channel.
 - **Events**: `watch` (one line per device added/removed and default change, JSON Lines with `-j`).
 - **Aliases**: `alias set scarlett "Scarlett 2i2"` stores the device uid in `~/.config/macos-gui/audio_aliases.json`.
-- **JSON**: `-j` on every command, a fixed contract (consumed by Topic). Exit codes: 0 ok, 1 failed, 2 usage/ambiguous, 3 refused, 4 timed out / unconfirmed; play/record/level cut short exit 128+signal.
-- **Permission**: record/level need the Microphone grant of the app that runs them (terminal, tmux, TopicGet.app); the binary embeds `NSMicrophoneUsageDescription`.
+- **JSON**: `-j` on every command, a fixed contract. Exit codes: 0 ok, 1 failed, 2 usage/ambiguous, 3 refused, 4 timed out / unconfirmed; play/record/level cut short exit 128+signal.
+- **Permission**: record/level need the Microphone grant of the app that runs them (terminal, tmux); the binary embeds `NSMicrophoneUsageDescription`.
+
+### 3. `bluetooth-tool` (alias: `bluetooth`)
+Native Swift Bluetooth CLI on IOBluetooth. Full reference: [`tools/bluetooth-tool/README.md`](tools/bluetooth-tool/README.md).
+- **Devices**: `list` / `status` with stable 1-based indices; target by index, alias, name substring or address.
+- **Read-back transactions**: `connect`, `disconnect`, `toggle`, `power on|off|toggle` act only when needed (`changed:false` otherwise) and report the state read back; no read-back in time = exit 4.
+- **Keyboard guard**: `power off` refuses (exit 3) while a Bluetooth keyboard, mouse or trackpad is connected, naming it, unless `--force`.
+- **Waiting & events**: `wait <target> connected|disconnected -t 30`, `watch` (one line per connect/disconnect, JSON Lines with `-j`).
+- **Logs**: `logs --last 2h --grep text` / `logs -f` over `bluetoothd` + `com.apple.bluetooth`.
+- **Aliases**: `alias set receiver dh590` stores the device address in `~/.config/macos-gui/bluetooth_aliases.json`.
+- **JSON**: `-j` on every command, a fixed contract. Exit codes: 0 ok, 1 failed, 2 usage, 3 refused, 4 timed out / unconfirmed.
+- **Permission**: embeds an Info.plist with `NSBluetoothAlwaysUsageDescription`.
+
+### 4. `display-tool` (source: `tools/display_ctl`)
+Native Swift display arrangement and resolution utility built directly with Quartz CoreGraphics.
+- **Mirror / Extend**: Toggle between mirrored and extended desktop modes (`display-tool mirror`, `display-tool extend`, `display-tool toggle`).
+- **Resolution Control**: Inspect and configure display modes, backing pixel dimensions, and refresh rates (`display-tool resolution 1920x1080 60`).
+- **Instant Query**: Native C CoreGraphics calls executing in <10ms.
+- **JSON Output**: `display-tool list -j` outputs clean display lists.
+
+### 5. `clipboard-tool` (source: `clipboard-network`)
+Zero-quote length-prefixed clipboard sharing bridge between macOS (`pbpaste`) and Windows SSH environments.
 
 ---
 
@@ -107,10 +98,10 @@ background-set color "#0d1117"             # Set solid matte background
 background-set rotate ~/Wallpapers 15m     # Rotate wallpapers
 
 # Display Arrangement
-display_ctl list -j                        # Inspect displays
-display_ctl mirror                         # Mirror secondary display
-display_ctl extend                         # Extend secondary display
-display_ctl toggle                         # Toggle mirroring mode
+display-tool list -j                       # Inspect displays
+display-tool mirror                        # Mirror secondary display
+display-tool extend                        # Extend secondary display
+display-tool toggle                        # Toggle mirroring mode
 display_ctl resolutions "LG"               # List available display modes
 
 # Bluetooth
